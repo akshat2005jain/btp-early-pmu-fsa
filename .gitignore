@@ -14,11 +14,6 @@ build/
 .coverage
 
 # Data & results
-data/raw/
-data/processed/
-results/figures/
-results/tables/
-results/models/
 *.npz
 *.parquet
 *.h5

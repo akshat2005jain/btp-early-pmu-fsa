@@ -1,0 +1,6 @@
+| Model | MAE (Hz) | RMSE (Hz) | R2 | 95% Bootstrap CI (Hz) | Inference (ms/scen) |
+| --- | --- | --- | --- | --- | --- |
+| Ridge Linear Regression | 0.0417 | 0.0515 | 0.9717 | [0.0321, 0.0521] | 0.0241 |
+| Decision Tree (CART) | 0.0287 | 0.0403 | 0.9827 | [0.0212, 0.0393] | 0.0191 |
+| Random Forest | 0.0184 | 0.0232 | 0.9943 | [0.0142, 0.0227] | 0.2016 |
+| Gradient Boosting (GBDT) | 0.0222 | 0.0289 | 0.9911 | [0.0169, 0.0288] | 0.0245 |

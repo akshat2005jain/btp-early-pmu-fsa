@@ -1,0 +1,7 @@
+| Model | Precision | Recall | F1 | PR-AUC | Brier | ECE | FNR_insecure |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Logistic Regression | 0.9333 | 1.0 | 0.9655 | 0.9951 | 0.0254 | 0.0434 | 0.0455 |
+| Decision Tree | 0.9333 | 1.0 | 0.9655 | 0.9667 | 0.0278 | 0.0278 | 0.0455 |
+| Random Forest | 0.9333 | 1.0 | 0.9655 | 1.0 | 0.0154 | 0.03 | 0.0455 |
+| Uncalibrated GBDT | 1.0 | 1.0 | 1.0 | 1.0 | 0.0003 | 0.006 | 0.0 |
+| Proposed Calibrated GBDT (Platt) | 0.9333 | 1.0 | 0.9655 | 1.0 | 0.0153 | 0.0453 | 0.0455 |

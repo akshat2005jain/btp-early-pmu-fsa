@@ -1,0 +1,2 @@
+t_feat_ms,t_infer_ms,t_total_ms,sim_time_ms,speedup_factor,latency_compliant_under_10ms,trials
+0.279,0.206,0.485,350.0,721.6,True,"{'feat_times_ms': [0.2794, 0.4002, 0.5074, 0.4798, 0.3084], 'infer_times_ms': [0.3433, 0.2234, 0.2057, 0.3427, 0.2493]}"
