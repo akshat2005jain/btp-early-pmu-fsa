@@ -1,0 +1,29 @@
+# Python & virtual environments
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# Local wheel cache & artifacts
+/tmp/local_wheels/
+.pytest_cache/
+.coverage
+
+# Data & results
+data/raw/
+data/processed/
+results/figures/
+results/tables/
+results/models/
+*.npz
+*.parquet
+*.h5
+
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/
