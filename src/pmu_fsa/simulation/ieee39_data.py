@@ -1,4 +1,4 @@
-"""IEEE 39-bus (New England 10-machine) system data from Pai (1989) and MATPOWER case39."""
+"""IEEE 39-bus (New England 10-machine) 50 Hz benchmark data."""
 
 import math
 from typing import Dict, List, Any, Tuple
@@ -30,67 +30,98 @@ for _area_id, _buses in AREA_PARTITION.items():
 
 GENERATOR_BUSES: List[int] = [30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
 
-# Machine parameters on 100 MVA base (H, Tg in s; X, D, R in pu)
+
+def compute_system_droop_pu(
+    r_machine_pu: float,
+    s_mva: float,
+    base_mva: float = BASE_MVA,
+) -> float:
+    """Convert machine-base droop R into system-base droop R_sys_pu = R * (S_base / S_mva)."""
+    if s_mva <= 0.0:
+        raise ValueError(f"Generator MVA rating s_mva must be positive, got {s_mva}")
+    return float(r_machine_pu) * (float(base_mva) / float(s_mva))
+
+
+BUS39_REGIONAL_PARAMS: Dict[str, Any] = {
+    "type": "Regional/Thermal",
+    "H": 42.0,
+    "Xdp": 0.0400,
+    "Xd": 0.1300,
+    "Xq": 0.1200,
+}
+
+BUS39_MACRO_INTERTIE_PARAMS: Dict[str, Any] = {
+    "type": "Intertie/Macro",
+    "H": 500.0,
+    "Xdp": 0.0060,
+    "Xd": 0.0200,
+    "Xq": 0.0190,
+}
+
+# Machine parameters: H, D, X on 100 MVA system base; R is 5% droop on machine rating S_mva,
+# R_sys_pu = R * (BASE_MVA / S_mva) is droop on the 100 MVA system base, and Tg (s) is the
+# effective first-order governor + steam-reheat turbine time constant.
+# Default Bus 39 represents an islanded regional plant (H = 42.0 s, Xdp = 0.0400 pu).
 GENERATOR_DATA: List[Dict[str, Any]] = [
     {
         "unit": 1, "bus": 30, "pai_gen": 10, "name": "G1", "type": "Thermal",
-        "P_mw": 250.0, "Q_mvar": 144.9, "V_pu": 1.0475,
+        "S_mva": 350.0, "P_mw": 250.0, "Q_mvar": 144.9, "V_pu": 1.0475,
         "H": 42.0, "D": 2.0, "Xdp": 0.0310, "Xd": 0.1000, "Xq": 0.0690,
-        "R": 0.05, "Tg": 0.50,
+        "R": 0.05, "R_sys_pu": compute_system_droop_pu(0.05, 350.0), "Tg": 4.20,
     },
     {
         "unit": 2, "bus": 31, "pai_gen": 2, "name": "G2", "type": "Nuclear/Slack",
-        "P_mw": 572.8, "Q_mvar": 398.7, "V_pu": 0.9820,
+        "S_mva": 750.0, "P_mw": 572.8, "Q_mvar": 398.7, "V_pu": 0.9820,
         "H": 30.3, "D": 2.0, "Xdp": 0.0697, "Xd": 0.2950, "Xq": 0.2820,
-        "R": 0.05, "Tg": 0.50,
+        "R": 0.05, "R_sys_pu": compute_system_droop_pu(0.05, 750.0), "Tg": 4.20,
     },
     {
         "unit": 3, "bus": 32, "pai_gen": 3, "name": "G3", "type": "Nuclear",
-        "P_mw": 650.0, "Q_mvar": 205.4, "V_pu": 0.9831,
+        "S_mva": 800.0, "P_mw": 650.0, "Q_mvar": 205.4, "V_pu": 0.9831,
         "H": 35.8, "D": 2.0, "Xdp": 0.0531, "Xd": 0.2495, "Xq": 0.2370,
-        "R": 0.05, "Tg": 0.50,
+        "R": 0.05, "R_sys_pu": compute_system_droop_pu(0.05, 800.0), "Tg": 4.20,
     },
     {
         "unit": 4, "bus": 33, "pai_gen": 4, "name": "G4", "type": "Fossil/Thermal",
-        "P_mw": 632.0, "Q_mvar": 108.9, "V_pu": 0.9972,
+        "S_mva": 750.0, "P_mw": 632.0, "Q_mvar": 108.9, "V_pu": 0.9972,
         "H": 28.6, "D": 2.0, "Xdp": 0.0436, "Xd": 0.2620, "Xq": 0.2580,
-        "R": 0.05, "Tg": 0.50,
+        "R": 0.05, "R_sys_pu": compute_system_droop_pu(0.05, 750.0), "Tg": 4.20,
     },
     {
         "unit": 5, "bus": 34, "pai_gen": 5, "name": "G5", "type": "Fossil/Thermal",
-        "P_mw": 508.0, "Q_mvar": 166.9, "V_pu": 1.0123,
+        "S_mva": 650.0, "P_mw": 508.0, "Q_mvar": 166.9, "V_pu": 1.0123,
         "H": 26.0, "D": 2.0, "Xdp": 0.1320, "Xd": 0.6700, "Xq": 0.6200,
-        "R": 0.05, "Tg": 0.50,
+        "R": 0.05, "R_sys_pu": compute_system_droop_pu(0.05, 650.0), "Tg": 4.20,
     },
     {
         "unit": 6, "bus": 35, "pai_gen": 6, "name": "G6", "type": "Nuclear",
-        "P_mw": 650.0, "Q_mvar": 211.2, "V_pu": 1.0493,
+        "S_mva": 800.0, "P_mw": 650.0, "Q_mvar": 211.2, "V_pu": 1.0493,
         "H": 34.8, "D": 2.0, "Xdp": 0.0500, "Xd": 0.2540, "Xq": 0.2410,
-        "R": 0.05, "Tg": 0.50,
+        "R": 0.05, "R_sys_pu": compute_system_droop_pu(0.05, 800.0), "Tg": 4.20,
     },
     {
         "unit": 7, "bus": 36, "pai_gen": 7, "name": "G7", "type": "Fossil/Thermal",
-        "P_mw": 560.0, "Q_mvar": 100.4, "V_pu": 1.0635,
+        "S_mva": 700.0, "P_mw": 560.0, "Q_mvar": 100.4, "V_pu": 1.0635,
         "H": 26.4, "D": 2.0, "Xdp": 0.0490, "Xd": 0.2950, "Xq": 0.2920,
-        "R": 0.05, "Tg": 0.50,
+        "R": 0.05, "R_sys_pu": compute_system_droop_pu(0.05, 700.0), "Tg": 4.20,
     },
     {
         "unit": 8, "bus": 37, "pai_gen": 8, "name": "G8", "type": "Nuclear",
-        "P_mw": 540.0, "Q_mvar": 0.6, "V_pu": 1.0278,
+        "S_mva": 650.0, "P_mw": 540.0, "Q_mvar": 0.6, "V_pu": 1.0278,
         "H": 24.3, "D": 2.0, "Xdp": 0.0570, "Xd": 0.2900, "Xq": 0.2800,
-        "R": 0.05, "Tg": 0.50,
+        "R": 0.05, "R_sys_pu": compute_system_droop_pu(0.05, 650.0), "Tg": 4.20,
     },
     {
         "unit": 9, "bus": 38, "pai_gen": 9, "name": "G9", "type": "Nuclear",
-        "P_mw": 830.0, "Q_mvar": 22.7, "V_pu": 1.0265,
+        "S_mva": 1000.0, "P_mw": 830.0, "Q_mvar": 22.7, "V_pu": 1.0265,
         "H": 34.5, "D": 2.0, "Xdp": 0.0570, "Xd": 0.2106, "Xq": 0.2050,
-        "R": 0.05, "Tg": 0.50,
+        "R": 0.05, "R_sys_pu": compute_system_droop_pu(0.05, 1000.0), "Tg": 4.20,
     },
     {
-        "unit": 10, "bus": 39, "pai_gen": 1, "name": "G10", "type": "Intertie/Macro",
-        "P_mw": 1000.0, "Q_mvar": 87.9, "V_pu": 1.0300,
-        "H": 500.0, "D": 2.0, "Xdp": 0.0060, "Xd": 0.0200, "Xq": 0.0190,
-        "R": 0.05, "Tg": 0.50,
+        "unit": 10, "bus": 39, "pai_gen": 1, "name": "G10", "type": "Regional/Thermal",
+        "S_mva": 1200.0, "P_mw": 1000.0, "Q_mvar": 87.9, "V_pu": 1.0300,
+        "H": 42.0, "D": 2.0, "Xdp": 0.0400, "Xd": 0.1300, "Xq": 0.1200,
+        "R": 0.05, "R_sys_pu": compute_system_droop_pu(0.05, 1200.0), "Tg": 4.20,
     },
 ]
 
@@ -211,17 +242,17 @@ def get_ieee39_branch_data() -> List[Dict[str, Any]]:
     return [dict(b) for b in BRANCH_DATA]
 
 
-def get_ieee39_gen_data() -> List[Dict[str, Any]]:
+def get_ieee39_gen_data(macro_intertie: bool = False) -> List[Dict[str, Any]]:
     """Return dynamic parameter dicts for the 10 generators."""
-    return [dict(g) for g in GENERATOR_DATA]
+    gens = [dict(g) for g in GENERATOR_DATA]
+    for g in gens:
+        if g["bus"] == 39:
+            params = BUS39_MACRO_INTERTIE_PARAMS if macro_intertie else BUS39_REGIONAL_PARAMS
+            g.update(params)
+        g["R_sys_pu"] = compute_system_droop_pu(g["R"], g["S_mva"], BASE_MVA)
+    return gens
 
 
-def get_total_system_inertia(macro_intertie: bool = True) -> float:
-    """Return total system inertia H_tot = sum(H_i)."""
-    h_tot = 0.0
-    for g in GENERATOR_DATA:
-        h = g["H"]
-        if g["bus"] == 39 and not macro_intertie:
-            h = 42.0  # local generator equivalent instead of external grid intertie
-        h_tot += h
-    return h_tot
+def get_total_system_inertia(macro_intertie: bool = False) -> float:
+    """Return total synchronous inertia H_tot = sum(H_i) on 100 MVA base."""
+    return float(sum(g["H"] for g in get_ieee39_gen_data(macro_intertie=macro_intertie)))

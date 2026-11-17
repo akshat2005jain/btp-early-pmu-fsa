@@ -1,12 +1,34 @@
-"""Post-disturbance PMU observation window slicing."""
+"""Post-disturbance PMU observation window slicing and anti-leakage guardrails."""
 
 from __future__ import annotations
 
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Set, Union
 
 import numpy as np
+
+from pmu_fsa.simulation.pmu_recorder import compute_causal_rocof, estimate_pmu_system_frequency
+
+
+FORBIDDEN_WINDOW_CHANNEL_KEYS: Set[str] = {
+    "ground_truth_nadir",
+    "ground_truth_t_nadir",
+    "bus_min_nadir",
+    "bus_min_t_nadir",
+    "nadir_bus_id",
+    "is_secure",
+    "y_nadir",
+    "y_secure",
+    "generator_deltas",
+    "generator_speeds",
+    "generator_powers",
+    "coi_rocof",
+    "area_frequencies",
+    "bus_frequencies_true",
+    "voltage_magnitudes_true",
+    "voltage_angles_true",
+}
 
 
 class CausalWindow(dict):
@@ -19,19 +41,41 @@ class CausalWindow(dict):
         bus_rocof: np.ndarray,
         voltage_magnitudes: np.ndarray,
         voltage_angles: np.ndarray,
-        coi_frequency: np.ndarray,
-        metadata: Dict[str, Any],
+        coi_frequency: Optional[np.ndarray] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        pmu_sys_frequency: Optional[np.ndarray] = None,
         **extra_channels: Any,
     ) -> None:
         super().__init__()
-        self["timestamps"] = np.asarray(timestamps)
-        self["bus_frequencies"] = np.asarray(bus_frequencies)
-        self["bus_rocof"] = np.asarray(bus_rocof)
-        self["voltage_magnitudes"] = np.asarray(voltage_magnitudes)
-        self["voltage_angles"] = np.asarray(voltage_angles)
-        self["coi_frequency"] = np.asarray(coi_frequency)
-        self["metadata"] = dict(metadata)
+        ts_arr = np.asarray(timestamps, dtype=float)
+        bf_arr = np.asarray(bus_frequencies, dtype=float)
+        br_arr = np.asarray(bus_rocof, dtype=float)
+        vm_arr = np.asarray(voltage_magnitudes, dtype=float)
+        va_arr = np.asarray(voltage_angles, dtype=float)
+
+        if pmu_sys_frequency is not None:
+            psys_arr = np.asarray(pmu_sys_frequency, dtype=float)
+        elif bf_arr.size > 0:
+            psys_arr = estimate_pmu_system_frequency(bf_arr)
+        elif coi_frequency is not None:
+            psys_arr = np.asarray(coi_frequency, dtype=float)
+        else:
+            psys_arr = np.zeros(len(ts_arr), dtype=float)
+
+        coi_arr = np.asarray(coi_frequency, dtype=float) if coi_frequency is not None else psys_arr.copy()
+
+        self["timestamps"] = ts_arr
+        self["bus_frequencies"] = bf_arr
+        self["bus_rocof"] = br_arr
+        self["voltage_magnitudes"] = vm_arr
+        self["voltage_angles"] = va_arr
+        self["pmu_sys_frequency"] = psys_arr
+        self["coi_frequency"] = coi_arr
+        self["metadata"] = dict(metadata or {})
+
         for k, v in extra_channels.items():
+            if k in FORBIDDEN_WINDOW_CHANNEL_KEYS:
+                continue
             self[k] = np.asarray(v) if isinstance(v, (list, tuple, np.ndarray)) else v
 
     @property
@@ -53,6 +97,10 @@ class CausalWindow(dict):
     @property
     def voltage_angles(self) -> np.ndarray:
         return self["voltage_angles"]
+
+    @property
+    def pmu_sys_frequency(self) -> np.ndarray:
+        return self["pmu_sys_frequency"]
 
     @property
     def coi_frequency(self) -> np.ndarray:
@@ -88,6 +136,14 @@ class CausalWindow(dict):
     def t_obs(self) -> float:
         return float(self["metadata"].get("t_obs", self.duration))
 
+    @property
+    def is_prior_to_nadir(self) -> bool:
+        return bool(self["metadata"].get("is_prior_to_nadir", True))
+
+    @property
+    def lead_time_s(self) -> float:
+        return float(self["metadata"].get("lead_time_s", float("nan")))
+
     def to_dict(self) -> Dict[str, Any]:
         return dict(self)
 
@@ -103,8 +159,8 @@ def _load_scenario_data(
 ) -> Dict[str, Any]:
     """Normalize scenario input from a dict, .npz path, or open NpzFile."""
     if isinstance(scenario_data, (str, Path)):
-        npz = np.load(scenario_data, allow_pickle=True)
-        data = {k: npz[k] for k in npz.files}
+        with np.load(scenario_data, allow_pickle=True) as npz:
+            data = {k: npz[k] for k in npz.files}
         if "metadata" in data and isinstance(data["metadata"], np.ndarray):
             data["metadata"] = data["metadata"].item()
         return data
@@ -130,8 +186,9 @@ def extract_causal_window(
     t_0: Optional[float] = None,
     strict_nadir: bool = False,
     clip_to_nadir: bool = False,
+    require_pre_nadir: bool = False,
 ) -> CausalWindow:
-    """Slice scenario channels to the post-disturbance window [t_0, t_0 + t_obs]."""
+    """Slice scenario PMU channels strictly to the causal window [t_0, t_0 + t_obs]."""
     if t_obs <= 0.0:
         raise ValueError(
             f"Observation window duration T_obs must be strictly positive (> 0), got {t_obs}"
@@ -164,9 +221,8 @@ def extract_causal_window(
             f"[{timestamps[0]:.4f}s, {timestamps[-1]:.4f}s]"
         )
 
-    t_end = t_0 + t_obs
+    t_end = t_0 + float(t_obs)
 
-    # +/-1e-9 tolerance prevents floating-point boundary drops on uniform grids
     idx_start = int(np.searchsorted(timestamps, t_0 - 1e-9, side="left"))
     idx_end = int(np.searchsorted(timestamps, t_end + 1e-9, side="right"))
 
@@ -190,56 +246,77 @@ def extract_causal_window(
         )
 
     is_prior_to_nadir = True
-    t_nadir = metadata.get("ground_truth_t_nadir", None)
-    if t_nadir is not None:
-        t_nadir = float(t_nadir)
-        if t_end >= t_nadir - 1e-6:
-            is_prior_to_nadir = False
+    lead_time_s = float("nan")
+    t_nadir_raw = metadata.get("ground_truth_t_nadir", None)
+    if t_nadir_raw is not None:
+        t_nadir = float(t_nadir_raw)
+        is_prior_to_nadir = bool(t_end < t_nadir - 1e-6)
+        lead_time_s = float(t_nadir - t_end)
+        if not is_prior_to_nadir:
             msg = (
                 f"Observation window [{t_0:.4f}s, {t_end:.4f}s] reaches or exceeds "
                 f"nadir time {t_nadir:.4f}s. Pre-nadir causality warning."
             )
-            if strict_nadir:
+            if strict_nadir or require_pre_nadir:
                 raise ValueError(f"Anti-leakage violation: {msg}")
             warnings.warn(msg, UserWarning, stacklevel=2)
 
             if clip_to_nadir:
                 idx_nadir = int(np.searchsorted(timestamps, t_nadir, side="left"))
                 idx_end = min(idx_end, max(idx_start + 2, idx_nadir))
+    elif require_pre_nadir:
+        raise ValueError(
+            "Anti-leakage violation: 'ground_truth_t_nadir' is required in metadata "
+            "when require_pre_nadir=True"
+        )
 
     ts_slice = timestamps[idx_start:idx_end].copy()
 
-    required_keys = [
-        "bus_frequencies",
-        "bus_rocof",
-        "voltage_magnitudes",
-        "voltage_angles",
-        "coi_frequency",
-    ]
+    required_bus_keys = ["bus_frequencies", "voltage_magnitudes", "voltage_angles"]
     sliced_arrays: Dict[str, np.ndarray] = {}
-    for key in required_keys:
+    for key in required_bus_keys:
         if key in data:
-            sliced_arrays[key] = np.asarray(data[key])[idx_start:idx_end].copy()
+            sliced_arrays[key] = np.asarray(data[key], dtype=float)[idx_start:idx_end].copy()
         else:
             raise KeyError(f"Scenario data missing required array '{key}'")
 
+    eff_fps = float(metadata.get("fps", 1.0 / max(1e-6, float(ts_slice[1] - ts_slice[0]))))
+    if "bus_rocof" in data:
+        sliced_arrays["bus_rocof"] = np.asarray(data["bus_rocof"], dtype=float)[idx_start:idx_end].copy()
+    else:
+        sliced_arrays["bus_rocof"] = compute_causal_rocof(
+            sliced_arrays["bus_frequencies"], fps=eff_fps, window_length=5
+        )
+
+    pmu_sys_slice = estimate_pmu_system_frequency(sliced_arrays["bus_frequencies"])
+    if "coi_frequency" in data:
+        coi_slice = np.asarray(data["coi_frequency"], dtype=float)[idx_start:idx_end].copy()
+    else:
+        coi_slice = pmu_sys_slice.copy()
+
     extra_channels: Dict[str, Any] = {}
-    standard_keys = set(required_keys) | {"timestamps", "metadata"}
+    handled_keys = (
+        set(required_bus_keys)
+        | {"timestamps", "metadata", "bus_rocof", "pmu_sys_frequency", "coi_frequency"}
+        | FORBIDDEN_WINDOW_CHANNEL_KEYS
+    )
     for key, val in data.items():
-        if key not in standard_keys:
-            if isinstance(val, np.ndarray) and len(val) == len(timestamps):
-                extra_channels[key] = val[idx_start:idx_end].copy()
-            else:
-                extra_channels[key] = val
+        if key in handled_keys:
+            continue
+        if isinstance(val, np.ndarray) and val.ndim >= 1 and len(val) == len(timestamps):
+            extra_channels[key] = val[idx_start:idx_end].copy()
+        else:
+            extra_channels[key] = val
 
     sliced_meta = dict(metadata)
-    sliced_meta["t_obs"] = t_obs
-    sliced_meta["t_0"] = t_0
+    sliced_meta["t_obs"] = float(t_obs)
+    sliced_meta["t_0"] = float(t_0)
     sliced_meta["idx_start"] = idx_start
     sliced_meta["idx_end"] = idx_end
     sliced_meta["n_samples"] = idx_end - idx_start
-    sliced_meta["is_prior_to_nadir"] = is_prior_to_nadir
-    sliced_meta["is_truncated"] = is_truncated
+    sliced_meta["is_prior_to_nadir"] = bool(is_prior_to_nadir)
+    sliced_meta["lead_time_s"] = float(lead_time_s)
+    sliced_meta["is_truncated"] = bool(is_truncated)
 
     return CausalWindow(
         timestamps=ts_slice,
@@ -247,7 +324,8 @@ def extract_causal_window(
         bus_rocof=sliced_arrays["bus_rocof"],
         voltage_magnitudes=sliced_arrays["voltage_magnitudes"],
         voltage_angles=sliced_arrays["voltage_angles"],
-        coi_frequency=sliced_arrays["coi_frequency"],
+        coi_frequency=coi_slice,
+        pmu_sys_frequency=pmu_sys_slice,
         metadata=sliced_meta,
         **extra_channels,
     )
@@ -258,6 +336,7 @@ def slice_scenario_batch(
     t_obs: float,
     strict_nadir: bool = False,
     clip_to_nadir: bool = False,
+    require_pre_nadir: bool = False,
 ) -> List[CausalWindow]:
     """Slice a list of scenarios to a uniform observation window duration t_obs."""
     windows: List[CausalWindow] = []
@@ -267,6 +346,7 @@ def slice_scenario_batch(
             t_obs=t_obs,
             strict_nadir=strict_nadir,
             clip_to_nadir=clip_to_nadir,
+            require_pre_nadir=require_pre_nadir,
         )
         windows.append(w)
     return windows

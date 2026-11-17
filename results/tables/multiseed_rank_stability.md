@@ -1,0 +1,16 @@
+| feature | perm_importance_mean | perm_importance_std | impurity_importance_mean | impurity_importance_std | mean_rank |
+| --- | --- | --- | --- | --- | --- |
+| freq_dev_integral | 0.1200 | 0.0105 | 0.4804 | 0.0772 | 1 |
+| freq_drop_max | 0.0464 | 0.0052 | 0.2251 | 0.0411 | 2 |
+| freq_drop_end | 0.0450 | 0.0054 | 0.1922 | 0.0299 | 3 |
+| rocof_mean | 0.0232 | 0.0076 | 0.0827 | 0.0643 | 4 |
+| rocof_end | 0.0035 | 0.0009 | 0.0078 | 0.0028 | 5 |
+| bus_drop_worst | 0.0011 | 0.0008 | 0.0036 | 0.0026 | 6 |
+| rocof_init | 0.0011 | 0.0005 | 0.0024 | 0.0009 | 7 |
+| freq_curvature_mean | 0.0008 | 0.0003 | 0.0011 | 0.0007 | 8 |
+| angle_divergence_max | 0.0006 | 0.0003 | 0.0010 | 0.0007 | 9 |
+| rocof_peak_neg | 0.0005 | 0.0002 | 0.0014 | 0.0012 | 10 |
+| bus_freq_std_mean | 0.0003 | 0.0002 | 0.0010 | 0.0014 | 11 |
+| area_freq_spread_max | 0.0002 | 0.0002 | 0.0004 | 0.0002 | 12 |
+| tie_line_angle_excursion | 0.0002 | 0.0002 | 0.0007 | 0.0005 | 13 |
+| freq_curvature_init | 0.0002 | 0.0001 | 0.0002 | 0.0004 | 14 |

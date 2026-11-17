@@ -1,0 +1,9 @@
+| reference_model | baseline_model | metric | reference_score | baseline_score | delta_ref_minus_base | ci95_low | ci95_high | p_value_wilcoxon | p_value_bootstrap | significant_p005 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| calibrated_gb_platt | logistic_clf | brier_score | 0.0141 | 0.0132 | 0.0009 | -0.0131 | 0.0206 | 0.0000 | 0.9640 | True |
+| calibrated_gb_platt | dt_clf | brier_score | 0.0141 | 0.0192 | -0.0051 | -0.0298 | 0.0100 | 0.0000 | 0.7440 | True |
+| calibrated_gb_platt | rf_clf | brier_score | 0.0141 | 0.0093 | 0.0048 | 0.0007 | 0.0094 | 0.0000 | 0.0200 | True |
+| calibrated_gb_platt | gbdt_clf | brier_score | 0.0141 | 0.0192 | -0.0051 | -0.0305 | 0.0095 | 0.7916 | 0.7420 | False |
+| calibrated_gb_platt | lgbm_clf | brier_score | 0.0141 | 0.0181 | -0.0040 | -0.0253 | 0.0102 | 0.5178 | 0.8380 | False |
+| calibrated_gb_platt | calibrated_gb_platt | brier_score | 0.0141 | 0.0141 | 0.0000 | 0.0000 | 0.0000 | 1.0000 | 1.0000 | False |
+| calibrated_gb_platt | calibrated_gb_iso | brier_score | 0.0141 | 0.0080 | 0.0061 | 0.0020 | 0.0125 | 0.0000 | 0.0000 | True |

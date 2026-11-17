@@ -1,17 +1,37 @@
-"""Continuous frequency nadir regression models."""
+"""Continuous frequency nadir regression models (50.0 Hz system standard)."""
 
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 import numpy as np
 from sklearn.base import BaseEstimator, RegressorMixin
-from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.ensemble import (
+    GradientBoostingRegressor,
+    HistGradientBoostingRegressor,
+    RandomForestRegressor,
+)
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeRegressor
+
+try:
+    from lightgbm import LGBMRegressor as _LGBMRegressor
+    _HAS_LIGHTGBM = True
+except (ImportError, OSError):
+    _LGBMRegressor = None
+    _HAS_LIGHTGBM = False
+
+
+SWING_FEATURE_NAMES: Tuple[str, ...] = (
+    "rocof_init",
+    "freq_drop_end",
+    "freq_curvature_mean",
+)
+# Canonical 0-based indices for (rocof_init, freq_drop_end, freq_curvature_mean) in CANONICAL_FEATURE_NAMES
+SWING_CANONICAL_INDICES: Tuple[int, int, int] = (0, 4, 13)
 
 
 class BaseNadirRegressor(BaseEstimator, RegressorMixin):
@@ -47,11 +67,13 @@ class BaseNadirRegressor(BaseEstimator, RegressorMixin):
             return np.empty((0, self.n_features_in_ or 0), dtype=float)
 
         if hasattr(X, "columns"):
-            cols = list(X.columns)
+            cols = [str(c) for c in X.columns]
             if is_fit:
                 self.feature_names_in_ = cols
             X_arr = np.asarray(X.values, dtype=float)
         else:
+            if is_fit:
+                self.feature_names_in_ = None
             X_arr = np.asarray(X, dtype=float)
 
         if X_arr.ndim == 1:
@@ -98,11 +120,7 @@ class BaseNadirRegressor(BaseEstimator, RegressorMixin):
                 f"Sample count mismatch: X has {len(X_proc)} samples, y has {len(y_proc)}"
             )
 
-        # Shift default 50 Hz clipping bounds when fitting on 60 Hz fixtures
-        if self.clip_bounds == (45.0, 50.5) and len(y_proc) > 0 and float(np.median(y_proc)) > 54.0:
-            self._effective_clip_bounds_: Optional[Tuple[float, float]] = (55.0, 60.5)
-        else:
-            self._effective_clip_bounds_ = self.clip_bounds
+        self._effective_clip_bounds_ = self.clip_bounds
 
         if self.scale_features:
             self.scaler_ = StandardScaler()
@@ -114,8 +132,11 @@ class BaseNadirRegressor(BaseEstimator, RegressorMixin):
     def _fit_underlying_model(self, X: np.ndarray, y: np.ndarray) -> None:
         raise NotImplementedError
 
+    def _predict_raw(self, X_proc: np.ndarray) -> np.ndarray:
+        return np.asarray(self.model_.predict(X_proc), dtype=float).ravel()
+
     def predict(self, X: Any) -> np.ndarray:
-        """Predict frequency nadir in Hz, clipped to physical bounds."""
+        """Predict frequency nadir in Hz, clipped to physical bounds if configured."""
         if self.model_ is None:
             raise RuntimeError("Model is not fitted")
 
@@ -126,7 +147,7 @@ class BaseNadirRegressor(BaseEstimator, RegressorMixin):
         if self.scale_features and self.scaler_ is not None:
             X_proc = self.scaler_.transform(X_proc)
 
-        preds = np.asarray(self.model_.predict(X_proc), dtype=float).ravel()
+        preds = self._predict_raw(X_proc)
 
         eff_bounds = getattr(self, "_effective_clip_bounds_", self.clip_bounds)
         if eff_bounds is not None:
@@ -135,8 +156,20 @@ class BaseNadirRegressor(BaseEstimator, RegressorMixin):
 
         return preds
 
+    @property
+    def feature_importances_(self) -> Optional[np.ndarray]:
+        if self.model_ is None:
+            return None
+        if hasattr(self.model_, "feature_importances_"):
+            return np.asarray(self.model_.feature_importances_, dtype=float)
+        if hasattr(self.model_, "coef_"):
+            coef = np.abs(np.asarray(self.model_.coef_, dtype=float)).ravel()
+            total = float(np.sum(coef))
+            return coef / total if total > 0 else coef
+        return None
+
     def evaluate(self, X: Any, y: Any) -> Dict[str, float]:
-        """Compute MAE, RMSE, and R2 on (X, y)."""
+        """Compute MAE, RMSE, R2, bias, median_ae, and p95_ae on (X, y)."""
         y_true = self._prepare_y(y)
         y_pred = self.predict(X)
 
@@ -145,8 +178,13 @@ class BaseNadirRegressor(BaseEstimator, RegressorMixin):
                 f"Sample count mismatch: y_true has {len(y_true)}, y_pred has {len(y_pred)}"
             )
 
+        diff = y_pred - y_true
+        abs_err = np.abs(diff)
         mae = float(mean_absolute_error(y_true, y_pred))
-        rmse = float(math.sqrt(float(np.mean((y_true - y_pred) ** 2))))
+        rmse = float(math.sqrt(float(np.mean(diff ** 2))))
+        bias = float(np.mean(diff))
+        median_ae = float(np.median(abs_err))
+        p95_ae = float(np.percentile(abs_err, 95.0))
 
         y_var = float(np.var(y_true))
         if y_var < 1e-12:
@@ -154,7 +192,98 @@ class BaseNadirRegressor(BaseEstimator, RegressorMixin):
         else:
             r2 = float(r2_score(y_true, y_pred))
 
-        return {"mae": mae, "rmse": rmse, "r2": r2}
+        return {
+            "mae": mae,
+            "rmse": rmse,
+            "r2": r2,
+            "bias": bias,
+            "median_ae": median_ae,
+            "p95_ae": p95_ae,
+        }
+
+
+class MeanNadirRegressor(BaseNadirRegressor):
+    """Constant training-mean nadir baseline."""
+
+    def __init__(
+        self,
+        clip_bounds: Optional[Tuple[float, float]] = (45.0, 50.5),
+    ) -> None:
+        super().__init__(clip_bounds=clip_bounds, scale_features=False)
+        self.model_name = "mean_baseline"
+        self.mean_value_: Optional[float] = None
+
+    def _fit_underlying_model(self, X: np.ndarray, y: np.ndarray) -> None:
+        self.mean_value_ = float(np.mean(y))
+        self.model_ = self.mean_value_
+
+    def _predict_raw(self, X_proc: np.ndarray) -> np.ndarray:
+        return np.full(len(X_proc), float(self.mean_value_), dtype=float)
+
+
+class AnalyticalSwingNadirRegressor(BaseNadirRegressor):
+    """Physics-informed swing-response baseline on [rocof_init, freq_drop_end, freq_curvature_mean].
+
+    Approximates the classical second-order swing + turbine-governor nadir trajectory
+    using a linear-quadratic polynomial expansion plus rational parabolic vertex proxy
+    (-r_0^2 / (2 * max(|curvature|, eps))) fitted via L2-regularized regression.
+    """
+
+    def __init__(
+        self,
+        alpha: float = 1e-2,
+        clip_bounds: Optional[Tuple[float, float]] = (45.0, 50.5),
+    ) -> None:
+        super().__init__(clip_bounds=clip_bounds, scale_features=False)
+        self.alpha = float(alpha)
+        self.model_name = "analytical_swing"
+        self.selected_indices_: Tuple[int, ...] = ()
+        self.basis_scaler_: Optional[StandardScaler] = None
+        self.single_target_: Optional[float] = None
+
+    def _select_indices(self, n_cols: int) -> Tuple[int, ...]:
+        if self.feature_names_in_ is not None:
+            idx = [self.feature_names_in_.index(k) for k in SWING_FEATURE_NAMES if k in self.feature_names_in_]
+            if len(idx) == len(SWING_FEATURE_NAMES):
+                return tuple(idx)
+        if n_cols >= 14:
+            return SWING_CANONICAL_INDICES
+        return tuple(range(min(3, n_cols)))
+
+    def _build_swing_basis(self, X: np.ndarray) -> np.ndarray:
+        sub = X[:, list(self.selected_indices_)]
+        k = sub.shape[1]
+        terms = [sub]
+        for i in range(k):
+            for j in range(i, k):
+                terms.append((sub[:, i] * sub[:, j]).reshape(-1, 1))
+        if k >= 3:
+            r0 = sub[:, 0]
+            curv = sub[:, 2]
+            parabolic_vertex = -(r0 ** 2) / (2.0 * np.maximum(np.abs(curv), 0.05))
+            terms.append(parabolic_vertex.reshape(-1, 1))
+        return np.hstack(terms)
+
+    def _fit_underlying_model(self, X: np.ndarray, y: np.ndarray) -> None:
+        self.selected_indices_ = self._select_indices(X.shape[1])
+        if len(X) == 1:
+            self.single_target_ = float(y[0])
+            self.model_ = self.single_target_
+            return
+        self.single_target_ = None
+        basis = self._build_swing_basis(X)
+        self.basis_scaler_ = StandardScaler()
+        basis_scaled = self.basis_scaler_.fit_transform(basis)
+        self.model_ = Ridge(alpha=self.alpha, fit_intercept=True, solver="auto")
+        self.model_.fit(basis_scaled, y)
+
+    def _predict_raw(self, X_proc: np.ndarray) -> np.ndarray:
+        if self.single_target_ is not None:
+            return np.full(len(X_proc), self.single_target_, dtype=float)
+        basis = self._build_swing_basis(X_proc)
+        if self.basis_scaler_ is not None:
+            basis = self.basis_scaler_.transform(basis)
+        return np.asarray(self.model_.predict(basis), dtype=float).ravel()
 
 
 class LinearNadirRegressor(BaseNadirRegressor):
@@ -223,8 +352,8 @@ class RandomForestNadirRegressor(BaseNadirRegressor):
 
     def __init__(
         self,
-        n_estimators: int = 50,
-        max_depth: Optional[int] = 8,
+        n_estimators: int = 100,
+        max_depth: Optional[int] = 10,
         min_samples_split: int = 2,
         min_samples_leaf: int = 1,
         random_state: Optional[int] = 42,
@@ -258,8 +387,8 @@ class GradientBoostingNadirRegressor(BaseNadirRegressor):
 
     def __init__(
         self,
-        n_estimators: int = 50,
-        learning_rate: float = 0.1,
+        n_estimators: int = 100,
+        learning_rate: float = 0.08,
         max_depth: int = 4,
         min_samples_split: int = 2,
         min_samples_leaf: int = 1,
@@ -291,7 +420,83 @@ class GradientBoostingNadirRegressor(BaseNadirRegressor):
         self.model_.fit(X, y)
 
 
+class LightGBMNadirRegressor(BaseNadirRegressor):
+    """Leaf-wise histogram gradient boosting regressor (LightGBM with HistGBDT fallback)."""
+
+    def __init__(
+        self,
+        n_estimators: int = 100,
+        learning_rate: float = 0.08,
+        num_leaves: int = 15,
+        max_depth: Optional[int] = 5,
+        min_child_samples: int = 5,
+        subsample: float = 1.0,
+        reg_lambda: float = 1e-2,
+        random_state: Optional[int] = 42,
+        clip_bounds: Optional[Tuple[float, float]] = (45.0, 50.5),
+        scale_features: bool = False,
+    ) -> None:
+        super().__init__(clip_bounds=clip_bounds, scale_features=scale_features)
+        self.n_estimators = int(n_estimators)
+        self.learning_rate = float(learning_rate)
+        self.num_leaves = int(num_leaves)
+        self.max_depth = max_depth
+        self.min_child_samples = int(min_child_samples)
+        self.subsample = float(subsample)
+        self.reg_lambda = float(reg_lambda)
+        self.random_state = random_state
+        self.model_name = "lightgbm"
+        self.backend_: str = "lightgbm" if _HAS_LIGHTGBM else "sklearn_hist_gbdt"
+        self.single_target_: Optional[float] = None
+
+    def _fit_underlying_model(self, X: np.ndarray, y: np.ndarray) -> None:
+        if len(X) == 1:
+            self.single_target_ = float(y[0])
+            self.model_ = self.single_target_
+            return
+        self.single_target_ = None
+        eff_min_samples = max(1, min(self.min_child_samples, max(1, len(X) // 3)))
+
+        if _HAS_LIGHTGBM and _LGBMRegressor is not None:
+            self.backend_ = "lightgbm"
+            self.model_ = _LGBMRegressor(
+                n_estimators=self.n_estimators,
+                learning_rate=self.learning_rate,
+                num_leaves=max(2, self.num_leaves),
+                max_depth=-1 if self.max_depth is None else int(self.max_depth),
+                min_child_samples=eff_min_samples,
+                subsample=self.subsample,
+                reg_lambda=self.reg_lambda,
+                random_state=self.random_state,
+                n_jobs=1,
+                verbose=-1,
+            )
+        else:
+            self.backend_ = "sklearn_hist_gbdt"
+            self.model_ = HistGradientBoostingRegressor(
+                max_iter=self.n_estimators,
+                learning_rate=self.learning_rate,
+                max_leaf_nodes=max(2, self.num_leaves),
+                max_depth=self.max_depth,
+                min_samples_leaf=eff_min_samples,
+                l2_regularization=self.reg_lambda,
+                random_state=self.random_state,
+            )
+        self.model_.fit(X, y)
+
+    def _predict_raw(self, X_proc: np.ndarray) -> np.ndarray:
+        if self.single_target_ is not None:
+            return np.full(len(X_proc), self.single_target_, dtype=float)
+        return np.asarray(self.model_.predict(X_proc), dtype=float).ravel()
+
+
 REGRESSOR_REGISTRY: Dict[str, Type[BaseNadirRegressor]] = {
+    "mean": MeanNadirRegressor,
+    "constant": MeanNadirRegressor,
+    "mean_baseline": MeanNadirRegressor,
+    "analytical": AnalyticalSwingNadirRegressor,
+    "analytical_swing": AnalyticalSwingNadirRegressor,
+    "swing": AnalyticalSwingNadirRegressor,
     "linear": LinearNadirRegressor,
     "ridge": LinearNadirRegressor,
     "linear_nadir": LinearNadirRegressor,
@@ -303,6 +508,8 @@ REGRESSOR_REGISTRY: Dict[str, Type[BaseNadirRegressor]] = {
     "gradient_boosting": GradientBoostingNadirRegressor,
     "gbdt": GradientBoostingNadirRegressor,
     "gbr": GradientBoostingNadirRegressor,
+    "lightgbm": LightGBMNadirRegressor,
+    "lgbm": LightGBMNadirRegressor,
 }
 
 

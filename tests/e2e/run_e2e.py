@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
-"""Standalone CLI runner for the E2E test suite."""
+"""Standalone CLI runner for the 50 Hz PMU-FSA E2E test suite."""
 
-import sys
-import os
-import time
+from __future__ import annotations
+
 import argparse
-import inspect
+from datetime import datetime, timezone
 import importlib.util
-from datetime import datetime
+import inspect
+import os
 from pathlib import Path
-from typing import List, Dict, Any, Tuple
+import shutil
+import sys
+import tempfile
+import time
+from typing import Any, Dict, List, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+for _p in (str(PROJECT_ROOT), str(PROJECT_ROOT / "src")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 TIER_MODULE_MAP = {
     "1": [
@@ -36,6 +41,16 @@ TIER_MODULE_MAP = {
         "tests/e2e/test_tier5_adversarial_models_eval.py",
     ],
 }
+
+
+def _unwrap_fixture(fn: Any) -> Any:
+    if hasattr(fn, "_get_wrapped_function"):
+        return fn._get_wrapped_function()
+    if hasattr(fn, "__wrapped__"):
+        return fn.__wrapped__
+    if hasattr(fn, "_fixture_function"):
+        return fn._fixture_function
+    return fn
 
 
 def load_module_from_file(filepath: Path):
@@ -61,7 +76,13 @@ def run_tests_via_introspection(test_files: List[Path], verbose: bool = False) -
     if conftest_path.exists():
         c_mod = load_module_from_file(conftest_path)
         for name, obj in inspect.getmembers(c_mod):
-            if callable(obj) and (hasattr(obj, "_pytestfixturefunction") or name.startswith("sample_") or name.startswith("ieee39_") or name.startswith("synthetic_")):
+            if callable(obj) and (
+                hasattr(obj, "_pytestfixturefunction")
+                or name.startswith("sample_")
+                or name.startswith("ieee39_")
+                or name.startswith("synthetic_")
+                or name.startswith("real_")
+            ):
                 fixtures[name] = obj
 
     for t_file in test_files:
@@ -76,7 +97,7 @@ def run_tests_via_introspection(test_files: List[Path], verbose: bool = False) -
                 "test": "module_import",
                 "status": "FAILED",
                 "error": str(e),
-                "duration": 0.0
+                "duration": 0.0,
             })
             n_failed += 1
             continue
@@ -88,68 +109,77 @@ def run_tests_via_introspection(test_files: List[Path], verbose: bool = False) -
             elif inspect.isclass(obj) and (name.startswith("Test") or name.endswith("Test")):
                 cls_inst = obj()
                 for m_name, m_obj in inspect.getmembers(cls_inst):
-                    if inspect.isfunction(m_obj) and m_name.startswith("test_"):
+                    if inspect.ismethod(m_obj) and m_name.startswith("test_"):
                         test_funcs.append((f"{name}::{m_name}", m_obj, cls_inst))
 
-        for test_name, func, instance in test_funcs:
+        for test_name, func, _ in test_funcs:
             t0 = time.time()
             sig = inspect.signature(func)
             kwargs = {}
             skip_test = False
             skip_reason = ""
-
-            for p_name in sig.parameters.keys():
-                if p_name in fixtures:
-                    fix_fn = fixtures[p_name]
-                    raw_fn = getattr(fix_fn, "__wrapped__", fix_fn)
-                    try:
-                        kwargs[p_name] = raw_fn()
-                    except BaseException as fe:
-                        skip_test = True
-                        skip_reason = f"Fixture {p_name} error: {fe}"
-                        break
-                elif hasattr(mod, p_name) and callable(getattr(mod, p_name)):
-                    kwargs[p_name] = getattr(mod, p_name)()
-
-            if skip_test:
-                duration = time.time() - t0
-                results.append({
-                    "module": module_name,
-                    "test": test_name,
-                    "status": "SKIPPED",
-                    "error": skip_reason,
-                    "duration": duration
-                })
-                n_skipped += 1
-                if verbose:
-                    print(f"  [SKIPPED] {test_name}: {skip_reason}")
-                continue
+            temp_dirs: List[Path] = []
 
             try:
-                func(**kwargs)
-                duration = time.time() - t0
-                results.append({
-                    "module": module_name,
-                    "test": test_name,
-                    "status": "PASSED",
-                    "error": None,
-                    "duration": duration
-                })
-                n_passed += 1
-                if verbose:
-                    print(f"  [PASSED]  {test_name} ({duration:.4f}s)")
-            except Exception as ex:
-                duration = time.time() - t0
-                results.append({
-                    "module": module_name,
-                    "test": test_name,
-                    "status": "FAILED",
-                    "error": str(ex),
-                    "duration": duration
-                })
-                n_failed += 1
-                if verbose:
-                    print(f"  [FAILED]  {test_name} ({duration:.4f}s): {ex}")
+                for p_name in sig.parameters.keys():
+                    if p_name == "tmp_path":
+                        td = Path(tempfile.mkdtemp(prefix="pmu_fsa_e2e_"))
+                        temp_dirs.append(td)
+                        kwargs[p_name] = td
+                    elif p_name in fixtures:
+                        raw_fn = _unwrap_fixture(fixtures[p_name])
+                        try:
+                            kwargs[p_name] = raw_fn()
+                        except BaseException as fe:
+                            skip_test = True
+                            skip_reason = f"Fixture {p_name} error: {fe}"
+                            break
+                    elif hasattr(mod, p_name) and callable(getattr(mod, p_name)):
+                        raw_mod_fn = _unwrap_fixture(getattr(mod, p_name))
+                        kwargs[p_name] = raw_mod_fn()
+
+                if skip_test:
+                    duration = time.time() - t0
+                    results.append({
+                        "module": module_name,
+                        "test": test_name,
+                        "status": "SKIPPED",
+                        "error": skip_reason,
+                        "duration": duration,
+                    })
+                    n_skipped += 1
+                    if verbose:
+                        print(f"  [SKIPPED] {test_name}: {skip_reason}")
+                    continue
+
+                try:
+                    func(**kwargs)
+                    duration = time.time() - t0
+                    results.append({
+                        "module": module_name,
+                        "test": test_name,
+                        "status": "PASSED",
+                        "error": None,
+                        "duration": duration,
+                    })
+                    n_passed += 1
+                    if verbose:
+                        print(f"  [PASSED]  {test_name} ({duration:.4f}s)")
+                except Exception as ex:
+                    duration = time.time() - t0
+                    results.append({
+                        "module": module_name,
+                        "test": test_name,
+                        "status": "FAILED",
+                        "error": f"{type(ex).__name__}: {ex}",
+                        "duration": duration,
+                    })
+                    n_failed += 1
+                    if verbose:
+                        print(f"  [FAILED]  {test_name} ({duration:.4f}s): {ex}")
+            finally:
+                for td in temp_dirs:
+                    shutil.rmtree(td, ignore_errors=True)
 
     total_duration = time.time() - total_start
     return {
@@ -162,15 +192,11 @@ def run_tests_via_introspection(test_files: List[Path], verbose: bool = False) -
     }
 
 
-def run_tests_via_pytest(test_files: List[Path], verbose: bool = False) -> Tuple[int, str]:
+def run_tests_via_pytest(test_files: List[Path], verbose: bool = False) -> int:
     import pytest
     args = [str(f) for f in test_files]
-    if verbose:
-        args.append("-v")
-    else:
-        args.append("-q")
-    exit_code = pytest.main(args)
-    return exit_code
+    args.append("-v" if verbose else "-q")
+    return int(pytest.main(args))
 
 
 def format_markdown_report(summary: Dict[str, Any], tier: str) -> str:
@@ -179,12 +205,12 @@ def format_markdown_report(summary: Dict[str, Any], tier: str) -> str:
     failed = summary["failed"]
     skipped = summary["skipped"]
     duration = summary["duration"]
-    pass_rate = (passed / total * 100) if total > 0 else 0.0
+    pass_rate = (passed / total * 100.0) if total > 0 else 0.0
 
     lines = [
-        "# E2E Test Suite Execution Report",
+        "# E2E Test Suite Execution Report (50.0 Hz Canonical Standard)",
         "",
-        f"- **Timestamp**: `{datetime.utcnow().isoformat()}Z`",
+        f"- **Timestamp**: `{datetime.now(timezone.utc).isoformat()}`",
         f"- **Tier**: `Tier {tier}`",
         f"- **Total Tests**: `{total}`",
         f"- **Passed**: `{passed}`",
@@ -211,7 +237,6 @@ def format_markdown_report(summary: Dict[str, Any], tier: str) -> str:
     else:
         lines.append(f"## Status: {failed} TEST(S) FAILED")
     lines.append("")
-
     return "\n".join(lines)
 
 
@@ -238,7 +263,7 @@ def _maybe_reexec_with_venv():
         pass
 
     venv_python = None
-    for candidate_name in ["python3", "python"]:
+    for candidate_name in ("python3", "python"):
         candidate = venv_dir / "bin" / candidate_name
         if candidate.exists() and os.access(str(candidate), os.X_OK):
             venv_python = candidate
@@ -251,15 +276,11 @@ def _maybe_reexec_with_venv():
     env["PMU_FSA_VENV_REEXEC"] = "1"
     pythonpath = env.get("PYTHONPATH", "")
     parts = [p for p in pythonpath.split(os.pathsep) if p]
-    root_str = str(PROJECT_ROOT)
-    src_str = str(PROJECT_ROOT / "src")
-    if root_str not in parts:
-        parts.insert(0, root_str)
-    if src_str not in parts:
-        parts.insert(0, src_str)
+    for path_entry in (str(PROJECT_ROOT), str(PROJECT_ROOT / "src")):
+        if path_entry not in parts:
+            parts.insert(0, path_entry)
     env["PYTHONPATH"] = os.pathsep.join(parts)
 
-    # Avoid .resolve() on the venv symlink so Python still locates pyvenv.cfg
     venv_exe_str = str(venv_python.absolute())
     args = [venv_exe_str, str(Path(__file__).resolve())] + sys.argv[1:]
     try:
@@ -270,9 +291,23 @@ def _maybe_reexec_with_venv():
 
 def main():
     _maybe_reexec_with_venv()
-    parser = argparse.ArgumentParser(description="Run E2E test suite for PMU-Based Early Frequency-Security Assessment")
-    parser.add_argument("--tier", choices=["1", "2", "3", "4", "5", "all"], default="1", help="Test tier to execute (default: 1)")
-    parser.add_argument("--report", type=str, default=None, help="Markdown output report path")
+    parser = argparse.ArgumentParser(
+        description="Run E2E test suite for PMU-Based Early Frequency-Security Assessment (50.0 Hz)"
+    )
+    parser.add_argument(
+        "--tier",
+        choices=["1", "2", "3", "4", "5", "all"],
+        default="1",
+        help="Test tier to execute (default: 1)",
+    )
+    parser.add_argument(
+        "--report",
+        "--report-path",
+        dest="report",
+        type=str,
+        default=None,
+        help="Markdown output report path",
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose execution output")
     args = parser.parse_args()
 
@@ -293,16 +328,19 @@ def main():
         print(f"No existing test files found for Tier {args.tier}. Looked for: {candidate_paths}")
         sys.exit(1)
 
-    print(f"============================================================")
-    print(f"PMU-FSA E2E Test Runner: Tier {args.tier.upper()}")
+    print("============================================================")
+    print(f"PMU-FSA 50 Hz E2E Test Runner: Tier {args.tier.upper()}")
     print(f"Found {len(test_files)} test file(s) to execute.")
-    print(f"============================================================")
+    print("============================================================")
 
     summary = run_tests_via_introspection(test_files, verbose=args.verbose)
     md_report = format_markdown_report(summary, args.tier)
 
     print("\n" + "=" * 60)
-    print(f"Results: {summary['passed']}/{summary['total']} passed ({summary['failed']} failed, {summary['skipped']} skipped) in {summary['duration']:.2f}s")
+    print(
+        f"Results: {summary['passed']}/{summary['total']} passed "
+        f"({summary['failed']} failed, {summary['skipped']} skipped) in {summary['duration']:.2f}s"
+    )
     print("=" * 60)
 
     if summary["failed"] > 0:
@@ -317,10 +355,9 @@ def main():
         report_path.write_text(md_report, encoding="utf-8")
         print(f"Markdown report written to: {report_path.resolve()}")
 
-    if summary["failed"] > 0 or summary["total"] == 0:
+    if summary["failed"] > 0 or summary["skipped"] > 0 or summary["total"] == 0:
         sys.exit(1)
-    else:
-        sys.exit(0)
+    sys.exit(0)
 
 
 if __name__ == "__main__":

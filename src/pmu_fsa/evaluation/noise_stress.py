@@ -1,22 +1,28 @@
-"""PMU measurement noise stress benchmark and OLS vs finite-difference ROCOF check."""
+"""PMU measurement noise stress benchmark (unsmoothed, held-out test, all 14 canonical features)."""
 
 from __future__ import annotations
 
 import copy
-import math
 import random
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
+from pmu_fsa.evaluation.sensitivity import split_scenarios_by_partition
 from pmu_fsa.features.extractor import FeatureExtractor
-from pmu_fsa.models.regressors import get_nadir_regressor, LinearNadirRegressor
-from pmu_fsa.models.classifiers import get_security_classifier
 from pmu_fsa.models.calibrated_gb import CalibratedGBDTClassifier
 from pmu_fsa.models.calibration_metrics import (
     brier_score as calc_brier_score,
     expected_calibration_error,
+)
+from pmu_fsa.models.classifiers import compute_binary_security_metrics, get_security_classifier
+from pmu_fsa.models.regressors import LinearNadirRegressor, get_nadir_regressor
+from pmu_fsa.simulation.pmu_recorder import (
+    PMUNoiseConfig,
+    apply_pmu_measurement_noise,
+    compute_causal_rocof,
+    estimate_pmu_system_frequency,
 )
 
 
@@ -29,8 +35,8 @@ class MeasurementNoiseBenchmark:
         rocof_noise_levels: Optional[List[float]] = None,
         t_obs: float = 1.0,
         threshold: float = 49.50,
+        f_nominal: float = 50.0,
         seed: int = 42,
-        smooth_monotonic: bool = True,
     ) -> None:
         raw_levels = noise_levels if noise_levels is not None else [0.0, 0.005, 0.01, 0.02, 0.05]
         for s in raw_levels:
@@ -41,8 +47,8 @@ class MeasurementNoiseBenchmark:
         self.rocof_noise_levels = rocof_noise_levels
         self.t_obs = float(t_obs)
         self.threshold = float(threshold)
+        self.f_nominal = float(f_nominal)
         self.seed = int(seed)
-        self.smooth_monotonic = bool(smooth_monotonic)
 
     def _inject_noise_into_scenarios(
         self,
@@ -50,168 +56,192 @@ class MeasurementNoiseBenchmark:
         noise_std: float,
         seed: int,
     ) -> List[Dict[str, Any]]:
-        """Return copies of scenarios with Gaussian noise added to frequency and ROCOF."""
+        """Inject reproducible Gaussian noise into PMU bus frequencies, magnitudes, and angles,
+        then recompute causal ROCOF and PMU system frequency through the production PMURecorder functions.
+        """
         if noise_std <= 0.0:
             return scenarios
 
-        rng = np.random.RandomState(seed)
-        corrupted = []
-        for s in scenarios:
+        scale_ratio = float(noise_std / 0.005)
+        sigma_v = min(0.02, 0.0005 * scale_ratio)
+        sigma_theta_deg = min(2.0, 0.05 * scale_ratio)
+
+        corrupted: List[Dict[str, Any]] = []
+        for idx, s in enumerate(scenarios):
             s_copy = copy.deepcopy(s)
+            meta = dict(s_copy.get("metadata", {}))
+            fps = float(meta.get("fps", 50.0))
+
             bf = np.asarray(s_copy["bus_frequencies"], dtype=float)
-            noise_bf = rng.normal(0.0, noise_std, size=bf.shape)
-            s_copy["bus_frequencies"] = bf + noise_bf
+            br = np.asarray(s_copy.get("bus_rocof", np.zeros_like(bf)), dtype=float)
+            vm = np.asarray(s_copy["voltage_magnitudes"], dtype=float)
+            va = np.asarray(s_copy["voltage_angles"], dtype=float)
 
-            coi = np.asarray(s_copy["coi_frequency"], dtype=float)
-            if bf.ndim == 2 and bf.shape[1] >= 39 and len(bf) == len(coi):
-                noise_coi = noise_bf[:, 29:39].mean(axis=1)
-            elif bf.ndim == 2 and bf.shape[1] > 0 and len(bf) == len(coi):
-                noise_coi = noise_bf.mean(axis=1)
-            else:
-                noise_coi = rng.normal(0.0, noise_std, size=coi.shape)
-            s_copy["coi_frequency"] = coi + noise_coi
+            cfg = PMUNoiseConfig(
+                sigma_f=float(noise_std),
+                sigma_rocof=0.0,
+                sigma_v=sigma_v,
+                sigma_theta_deg=sigma_theta_deg,
+                seed=int(seed),
+            )
+            f_noisy, rocof_noisy, v_noisy, theta_noisy = apply_pmu_measurement_noise(
+                bf, br, vm, va, noise_config=cfg, seed_offset=idx, fps=fps
+            )
+            f_sys_noisy = estimate_pmu_system_frequency(f_noisy)
 
-            if "bus_rocof" in s_copy:
-                rocof = np.asarray(s_copy["bus_rocof"], dtype=float)
-                noise_rocof = rng.normal(0.0, noise_std * 2.0, size=rocof.shape)
-                s_copy["bus_rocof"] = rocof + noise_rocof
-
+            s_copy["bus_frequencies"] = f_noisy
+            s_copy["bus_rocof"] = compute_causal_rocof(f_noisy, fps=fps, window_length=5)
+            s_copy["voltage_magnitudes"] = v_noisy
+            s_copy["voltage_angles"] = theta_noisy
+            s_copy["pmu_sys_frequency"] = f_sys_noisy
+            # Overwrite coi_frequency with noisy PMU estimate so zero uncorrupted simulator COI can leak
+            s_copy["coi_frequency"] = f_sys_noisy
+            meta["is_noisy"] = True
+            meta["noise_sigma_f_hz"] = float(noise_std)
+            s_copy["metadata"] = meta
             corrupted.append(s_copy)
         return corrupted
 
     def run(
         self,
         scenarios: List[Dict[str, Any]],
-        regressor_type: str = "linear",
+        regressor_type: str = "gbdt",
         classifier_type: str = "calibrated_gb",
+        regressor: Optional[Any] = None,
+        classifier: Optional[Any] = None,
     ) -> Dict[str, Any]:
-        """Train on clean scenarios and evaluate across configured PMU noise levels."""
-        columns = ["noise_std_hz", "mae", "rmse", "ece"]
+        """Train on clean train (+ val) and evaluate across PMU noise levels strictly on held-out test."""
+        base_columns = ["noise_std_hz", "mae", "rmse", "ece"]
         if not scenarios:
             return {
-                "columns": columns,
+                "columns": base_columns,
                 "results": [],
+                "partition_protocol": "empty",
             }
 
-        extractor = FeatureExtractor(t_obs=self.t_obs)
-
-        # Exclude unfiltered 2-point finite-diff ROCOF columns since white noise blows up their variance
-        _unfiltered_2pt = {"rocof_peak_neg_coi", "rocof_max_abs_coi", "pk_rocof", "max_abs_rocof"}
-        X_clean_df, y_clean, y_sec_clean, _ = extractor.transform_batch(
-            scenarios, t_obs=self.t_obs, as_dataframe=True
+        train_scens, val_scens, test_scens, _, protocol = split_scenarios_by_partition(
+            scenarios, random_state=self.seed
         )
-        if hasattr(X_clean_df, "columns"):
-            keep_cols = [c for c in X_clean_df.columns if c not in _unfiltered_2pt]
-            X_clean = np.asarray(X_clean_df[keep_cols].values, dtype=float)
+
+        extractor = FeatureExtractor(t_obs=self.t_obs, f_nominal=self.f_nominal)
+
+        X_tr_df, y_tr_raw, _, _ = extractor.transform_batch(train_scens, t_obs=self.t_obs, as_dataframe=True)
+        X_train = X_tr_df.values if hasattr(X_tr_df, "values") else np.asarray(X_tr_df, dtype=float)
+        y_train = np.asarray(y_tr_raw, dtype=float)
+        ys_train = np.where(y_train >= self.threshold, 1, 0).astype(int)
+
+        if len(val_scens) > 0:
+            X_va_df, y_va_raw, _, _ = extractor.transform_batch(val_scens, t_obs=self.t_obs, as_dataframe=True)
+            X_val = X_va_df.values if hasattr(X_va_df, "values") else np.asarray(X_va_df, dtype=float)
+            y_val = np.asarray(y_va_raw, dtype=float)
         else:
-            keep_cols = []
-            X_clean = np.asarray(X_clean_df, dtype=float)
-        y_true = np.asarray(y_clean, dtype=float)
-        y_sec = np.asarray(y_sec_clean, dtype=int)
+            X_val, y_val = None, None
 
-        try:
-            if regressor_type.strip().lower() in ("linear", "ridge", "linear_nadir"):
-                reg = LinearNadirRegressor(alpha=1.0)
-            else:
-                reg = get_nadir_regressor(regressor_type)
-        except Exception:
-            reg = LinearNadirRegressor(alpha=1.0)
-        reg.fit(X_clean, y_true)
+        # Exact same 14 canonical features on clean held-out test scenarios (ZERO dropped columns)
+        X_te_clean_df, y_te_raw, _, _ = extractor.transform_batch(test_scens, t_obs=self.t_obs, as_dataframe=True)
+        X_test_clean = X_te_clean_df.values if hasattr(X_te_clean_df, "values") else np.asarray(X_te_clean_df, dtype=float)
+        y_test = np.asarray(y_te_raw, dtype=float)
+        ys_test = np.where(y_test >= self.threshold, 1, 0).astype(int)
+        feature_names = list(X_te_clean_df.columns) if hasattr(X_te_clean_df, "columns") else []
 
-        if classifier_type == "calibrated_gb":
-            clf = CalibratedGBDTClassifier(
-                method="platt",
-                threshold=self.threshold,
-                random_state=self.seed,
-            )
-            clf.fit(X_clean, y_true, y_sec)
+        if regressor is not None and getattr(regressor, "n_features_in_", X_test_clean.shape[1]) == X_test_clean.shape[1]:
+            reg = regressor
         else:
             try:
-                clf = get_security_classifier(classifier_type)
+                reg = get_nadir_regressor(regressor_type, random_state=self.seed)
+            except TypeError:
+                reg = get_nadir_regressor(regressor_type)
             except Exception:
-                clf = CalibratedGBDTClassifier(method="platt", threshold=self.threshold)
-            clf.fit(X_clean, y_sec)
+                reg = LinearNadirRegressor()
+            reg.fit(X_train, y_train)
+
+        if classifier is not None and getattr(classifier, "n_features_in_", X_test_clean.shape[1]) == X_test_clean.shape[1]:
+            clf = classifier
+        else:
+            if classifier_type == "calibrated_gb":
+                clf = CalibratedGBDTClassifier(
+                    method="platt",
+                    threshold=self.threshold,
+                    random_state=self.seed,
+                )
+                if X_val is not None and y_val is not None and len(X_val) >= 2:
+                    clf.fit(X_train, y_train, ys_train, X_cal=X_val, y_cal=y_val)
+                else:
+                    clf.fit(X_train, y_train, ys_train)
+            else:
+                try:
+                    clf = get_security_classifier(classifier_type, threshold=self.threshold)
+                except Exception:
+                    clf = CalibratedGBDTClassifier(method="platt", threshold=self.threshold)
+                clf.fit(X_train, ys_train)
+
+        # Clean held-out reference probabilities for probability-stability tracking
+        probs_clean_ref = clf.predict_proba(X_test_clean)
+        p_clean_sec = np.asarray(
+            probs_clean_ref[:, 1] if hasattr(probs_clean_ref, "ndim") and probs_clean_ref.ndim > 1 else probs_clean_ref,
+            dtype=float,
+        )
 
         rows: List[Dict[str, Any]] = []
-        prev_mae: Optional[float] = None
-        prev_noise: float = 0.0
-
         for idx, noise in enumerate(self.noise_levels):
             if noise == 0.0:
-                X_eval = X_clean
+                X_eval = X_test_clean
             else:
-                noisy_scens = self._inject_noise_into_scenarios(
-                    scenarios, noise_std=noise, seed=self.seed + int(noise * 1000) + idx
+                noisy_test_scens = self._inject_noise_into_scenarios(
+                    test_scens,
+                    noise_std=noise,
+                    seed=self.seed + int(round(noise * 100000)) + idx * 1000,
                 )
                 X_eval_df, _, _, _ = extractor.transform_batch(
-                    noisy_scens, t_obs=self.t_obs, as_dataframe=True
+                    noisy_test_scens, t_obs=self.t_obs, as_dataframe=True
                 )
-                if keep_cols and hasattr(X_eval_df, "columns"):
-                    X_eval = np.asarray(X_eval_df[keep_cols].values, dtype=float)
-                else:
-                    X_eval = X_eval_df.values if hasattr(X_eval_df, "values") else np.asarray(X_eval_df)
+                X_eval = X_eval_df.values if hasattr(X_eval_df, "values") else np.asarray(X_eval_df, dtype=float)
 
-            # Clip predictions to physical grid bounds (adapting if 60 Hz fixtures are passed)
-            low_b, high_b = (55.0, 60.5) if (len(y_true) > 0 and float(np.median(y_true)) > 54.0) else (45.0, 50.5)
-            y_pred = np.clip(np.asarray(reg.predict(X_eval), dtype=float), low_b, high_b)
-
-            errors = y_true - y_pred
-            mae_raw = float(np.mean(np.abs(errors)))
-            rmse_raw = float(np.sqrt(np.mean(errors ** 2)))
-
-            if self.smooth_monotonic:
-                if prev_mae is not None:
-                    delta = mae_raw - prev_mae
-                    noise_step = noise - prev_noise
-                    max_step_delta = min(0.35, 0.40 * (noise_step / 0.01)) if noise_step > 0 else 0.35
-                    if delta > max_step_delta:
-                        mae = prev_mae + max_step_delta
-                    elif delta < 0.0:
-                        mae = prev_mae + 1e-4
-                    else:
-                        mae = mae_raw
-                else:
-                    mae = max(0.01, mae_raw)
-
-                rmse = max(rmse_raw, mae)
-                prev_mae = mae
-                prev_noise = noise
-            else:
-                mae = mae_raw
-                rmse = max(rmse_raw, mae_raw)
-
-            y_sec_pred = np.asarray(clf.predict(X_eval), dtype=int)
+            reg_m = reg.evaluate(X_eval, y_test)
             probs = clf.predict_proba(X_eval)
             p_sec = np.asarray(probs[:, 1] if hasattr(probs, "ndim") and probs.ndim > 1 else probs, dtype=float)
+            y_sec_pred = (p_sec >= 0.5).astype(int)
+            cls_m = compute_binary_security_metrics(ys_test, y_sec_pred, p_secure=p_sec)
 
-            tp = int(np.sum((y_sec == 1) & (y_sec_pred == 1)))
-            fp = int(np.sum((y_sec == 0) & (y_sec_pred == 1)))
-            fn = int(np.sum((y_sec == 1) & (y_sec_pred == 0)))
-            prec = float(tp / (tp + fp)) if (tp + fp) > 0 else 1.0
-            rec = float(tp / (tp + fn)) if (tp + fn) > 0 else 1.0
-            f1 = float((2 * prec * rec) / (prec + rec)) if (prec + rec) > 0 else 1.0
-            f1_raw = f1
+            ece = float(expected_calibration_error(ys_test, p_sec, n_bins=10, threshold=self.threshold))
+            brier = float(calc_brier_score(ys_test, p_sec, threshold=self.threshold))
+            prob_stability = float(np.mean(np.abs(p_sec - p_clean_sec))) if len(p_sec) > 0 else 0.0
 
-            n_bins = min(5, len(y_sec)) if len(y_sec) >= 5 else 3
-            ece = float(np.clip(expected_calibration_error(y_sec, p_sec, n_bins=n_bins), 0.0, 1.0))
-            brier = float(calc_brier_score(y_sec, p_sec))
+            mae = float(reg_m["mae"])
+            rmse = float(reg_m["rmse"])
+            f1 = float(cls_m["f1"])
 
-            row_dict = {
+            rows.append({
                 "noise_std_hz": float(noise),
-                "mae": float(round(mae, 4)),
-                "rmse": float(round(rmse, 4)),
-                "ece": float(round(ece, 4)),
-                "f1": float(round(f1, 4)),
-                "brier_score": float(round(brier, 4)),
-                "mae_raw": float(round(mae_raw, 4)),
-                "rmse_raw": float(round(rmse_raw, 4)),
-                "f1_raw": float(round(f1_raw, 4)),
-            }
-            rows.append(row_dict)
+                "mae": round(mae, 4),
+                "rmse": round(rmse, 4),
+                "bias": round(float(reg_m["bias"]), 4),
+                "median_ae": round(float(reg_m["median_ae"]), 4),
+                "p95_ae": round(float(reg_m["p95_ae"]), 4),
+                "r2": round(float(reg_m["r2"]), 4),
+                "precision": round(float(cls_m["precision"]), 4),
+                "recall": round(float(cls_m["recall"]), 4),
+                "f1": round(f1, 4),
+                "fnr_insecure": round(float(cls_m["fnr_insecure"]), 4),
+                "missed_insecure_count": int(cls_m["missed_insecure_count"]),
+                "fpr_secure": round(float(cls_m["fpr_secure"]), 4),
+                "brier_score": round(brier, 4),
+                "ece": round(ece, 4),
+                "prob_stability_mad": round(prob_stability, 4),
+                "n_features_used": int(X_eval.shape[1]),
+                "mae_raw": round(mae, 4),
+                "rmse_raw": round(rmse, 4),
+                "f1_raw": round(f1, 4),
+            })
 
         return {
-            "columns": columns,
+            "columns": base_columns,
             "results": rows,
+            "partition_protocol": protocol,
+            "n_train": len(train_scens),
+            "n_val": len(val_scens),
+            "n_test": len(test_scens),
+            "feature_names": feature_names,
         }
 
     @staticmethod
@@ -280,6 +310,13 @@ class MeasurementNoiseBenchmark:
         lines = ["| " + " | ".join(headers) + " |"]
         lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
         for _, row in df.iterrows():
-            vals = [f"{v:.4f}" if isinstance(v, (float, np.floating)) else str(v) for v in row]
+            vals = []
+            for v in row:
+                if isinstance(v, (int, np.integer)):
+                    vals.append(str(int(v)))
+                elif isinstance(v, (float, np.floating)):
+                    vals.append(f"{v:.4f}")
+                else:
+                    vals.append(str(v))
             lines.append("| " + " | ".join(vals) + " |")
         return "\n".join(lines)

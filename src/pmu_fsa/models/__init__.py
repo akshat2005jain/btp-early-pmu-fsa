@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from pmu_fsa.models.regressors import (
     BaseNadirRegressor,
+    MeanNadirRegressor,
+    AnalyticalSwingNadirRegressor,
     LinearNadirRegressor,
     DecisionTreeNadirRegressor,
     RandomForestNadirRegressor,
     GradientBoostingNadirRegressor,
+    LightGBMNadirRegressor,
     NadirRegressor,
     get_nadir_regressor,
     REGRESSOR_REGISTRY,
@@ -19,8 +22,11 @@ from pmu_fsa.models.classifiers import (
     DecisionTreeSecurityClassifier,
     RandomForestSecurityClassifier,
     GradientBoostingSecurityClassifier,
+    LightGBMSecurityClassifier,
     SecurityClassifier,
     get_security_classifier,
+    compute_binary_security_metrics,
+    evaluate_probability_threshold_sweep,
     CLASSIFIER_REGISTRY,
 )
 from pmu_fsa.models.calibrated_gb import CalibratedGBDTClassifier
@@ -34,10 +40,13 @@ from pmu_fsa.models.calibration_metrics import (
 
 __all__ = [
     "BaseNadirRegressor",
+    "MeanNadirRegressor",
+    "AnalyticalSwingNadirRegressor",
     "LinearNadirRegressor",
     "DecisionTreeNadirRegressor",
     "RandomForestNadirRegressor",
     "GradientBoostingNadirRegressor",
+    "LightGBMNadirRegressor",
     "NadirRegressor",
     "get_nadir_regressor",
     "REGRESSOR_REGISTRY",
@@ -47,8 +56,11 @@ __all__ = [
     "DecisionTreeSecurityClassifier",
     "RandomForestSecurityClassifier",
     "GradientBoostingSecurityClassifier",
+    "LightGBMSecurityClassifier",
     "SecurityClassifier",
     "get_security_classifier",
+    "compute_binary_security_metrics",
+    "evaluate_probability_threshold_sweep",
     "CLASSIFIER_REGISTRY",
     "CalibratedGBDTClassifier",
     "brier_score",
