@@ -1,0 +1,9 @@
+| reference_model | baseline_model | metric | reference_score | baseline_score | delta_ref_minus_base | ci95_low | ci95_high | p_value_wilcoxon | p_value_bootstrap | significant_p005 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| gbdt | mean | mae | 0.0077 | 0.2104 | -0.2027 | -0.2420 | -0.1645 | 0.0000 | 0.0000 | True |
+| gbdt | analytical | mae | 0.0077 | 0.0042 | 0.0035 | 0.0017 | 0.0056 | 0.0001 | 0.0000 | True |
+| gbdt | linear | mae | 0.0077 | 0.0034 | 0.0043 | 0.0026 | 0.0065 | 0.0000 | 0.0000 | True |
+| gbdt | dt | mae | 0.0077 | 0.0111 | -0.0034 | -0.0054 | -0.0015 | 0.0042 | 0.0000 | True |
+| gbdt | rf | mae | 0.0077 | 0.0091 | -0.0013 | -0.0027 | -0.0000 | 0.0956 | 0.0440 | True |
+| gbdt | gbdt | mae | 0.0077 | 0.0077 | 0.0000 | 0.0000 | 0.0000 | 1.0000 | 1.0000 | False |
+| gbdt | lgbm | mae | 0.0077 | 0.0086 | -0.0009 | -0.0028 | 0.0010 | 0.0594 | 0.3080 | False |

@@ -1,0 +1,8 @@
+reference_model,baseline_model,metric,reference_score,baseline_score,delta_ref_minus_base,ci95_low,ci95_high,p_value_wilcoxon,p_value_bootstrap,significant_p005
+gbdt,mean,mae,0.00772,0.21043,-0.20271,-0.24198,-0.16454,0.0,0.0,True
+gbdt,analytical,mae,0.00772,0.00421,0.00352,0.00167,0.00562,0.000136,0.0,True
+gbdt,linear,mae,0.00772,0.0034,0.00433,0.00259,0.00653,3.3e-05,0.0,True
+gbdt,dt,mae,0.00772,0.01112,-0.00339,-0.00538,-0.0015,0.004242,0.0,True
+gbdt,rf,mae,0.00772,0.00905,-0.00132,-0.00275,-4e-05,0.095601,0.044,True
+gbdt,gbdt,mae,0.00772,0.00772,0.0,0.0,0.0,1.0,1.0,False
+gbdt,lgbm,mae,0.00772,0.00859,-0.00087,-0.00283,0.00097,0.059412,0.308,False

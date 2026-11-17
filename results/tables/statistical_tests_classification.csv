@@ -1,0 +1,8 @@
+reference_model,baseline_model,metric,reference_score,baseline_score,delta_ref_minus_base,ci95_low,ci95_high,p_value_wilcoxon,p_value_bootstrap,significant_p005
+calibrated_gb_platt,logistic_clf,brier_score,0.0141,0.01324,0.00087,-0.01307,0.02063,0.0,0.964,True
+calibrated_gb_platt,dt_clf,brier_score,0.0141,0.01923,-0.00513,-0.0298,0.01,0.0,0.744,True
+calibrated_gb_platt,rf_clf,brier_score,0.0141,0.00934,0.00477,0.00073,0.00943,2.4e-05,0.02,True
+calibrated_gb_platt,gbdt_clf,brier_score,0.0141,0.01922,-0.00512,-0.03047,0.00955,0.791643,0.742,False
+calibrated_gb_platt,lgbm_clf,brier_score,0.0141,0.01808,-0.00397,-0.02525,0.01023,0.517821,0.838,False
+calibrated_gb_platt,calibrated_gb_platt,brier_score,0.0141,0.0141,0.0,0.0,0.0,1.0,1.0,False
+calibrated_gb_platt,calibrated_gb_iso,brier_score,0.0141,0.00801,0.00609,0.00196,0.01247,0.0,0.0,True

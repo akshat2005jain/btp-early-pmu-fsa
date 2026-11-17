@@ -1,0 +1,9 @@
+| ablation | description | n_features | id_mae | id_rmse | id_r2 | id_f1 | id_brier | id_ece | id_fnr_insecure | ood_mae | ood_f1 | ood_ece | ood_fnr_insecure | delta_id_mae_vs_50fps |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| all_14 | All 14 Canonical PMU Features (50 fps, 39-bus) | 14 | 0.0093 | 0.0142 | 0.9968 | 0.9767 | 0.0164 | 0.0354 | 0.0323 | 0.0242 | 0.9887 | 0.0294 | 0.0066 | - |
+| freq_only | Aggregate Frequency Deviation Only (3 features) | 3 | 0.0092 | 0.0126 | 0.9975 | 0.9767 | 0.0172 | 0.0312 | 0.0323 | 0.0191 | 0.9887 | 0.0301 | 0.0066 | - |
+| freq_plus_rocof | Frequency + First-Order ROCOF (7 features) | 7 | 0.0089 | 0.0128 | 0.9974 | 0.9767 | 0.0166 | 0.0318 | 0.0323 | 0.0226 | 0.9887 | 0.0299 | 0.0066 | - |
+| no_spatial_angle | Temporal Frequency + ROCOF + Curvature, No Spatial/Angle (9 features) | 9 | 0.0094 | 0.0138 | 0.9970 | 1.0000 | 0.0152 | 0.0501 | 0.0000 | 0.0215 | 0.9915 | 0.0315 | 0.0033 | - |
+| spatial_angle_only | Multi-Area Spatial Dispersion & Phase Angles Only (5 features) | 5 | 0.0310 | 0.0444 | 0.9688 | 0.9302 | 0.0433 | 0.0541 | 0.0645 | 0.0505 | 0.9459 | 0.0212 | 0.0264 | - |
+| partial_13bus_pmu | Partial Spatial Observability (13/39 PMU Buses, 33.3%) | 14 | 0.0108 | 0.0174 | 0.9952 | 1.0000 | 0.0160 | 0.0513 | 0.0000 | 0.0238 | 0.9858 | 0.0275 | 0.0066 | - |
+| fps_25_vs_50 | Reduced PMU Reporting Rate (25 frames/s vs 50 frames/s baseline) | 14 | 0.0094 | 0.0142 | 0.9968 | 0.9767 | 0.0174 | 0.0366 | 0.0323 | 0.0239 | 0.9915 | 0.0309 | 0.0066 | 0.0001 |
