@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BTP Final Presentation — Early PMU-Based Frequency-Security Assessment (50.0 Hz)</title>
+<style>
+  @page {
+    size: 297mm 167mm;
+    margin: 0;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #0f172a;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #0f172a;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .slide {
+    width: 297mm;
+    height: 167mm;
+    padding: 10mm 13mm 9mm 13mm;
+    background: #ffffff;
+    position: relative;
+    overflow: hidden;
+    page-break-after: always;
+    break-after: page;
+    display: flex;
+    flex-direction: column;
+  }
+  .slide:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+  .slide.title-slide {
+    background: linear-gradient(135deg, #090d16 0%, #0f172a 45%, #1e3a8a 100%);
+    color: #ffffff;
+    justify-content: space-between;
+    padding: 13mm 16mm 11mm 16mm;
+  }
+  .top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 2px solid #1e3a8a;
+    padding-bottom: 3.5mm;
+    margin-bottom: 4mm;
+    flex-shrink: 0;
+  }
+  .top-bar .sec {
+    font-size: 8.5pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    color: #1d4ed8;
+  }
+  .top-bar h2 {
+    margin: 0.8mm 0 0 0;
+    font-size: 16.5pt;
+    color: #0f172a;
+    line-height: 1.15;
+  }
+  .slide-num {
+    background: #0f172a;
+    color: #ffffff;
+    font-size: 8.5pt;
+    font-weight: 700;
+    padding: 1.5mm 3.5mm;
+    border-radius: 999px;
+  }
+  .content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 0;
+  }
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5mm;
+    align-items: stretch;
+  }
+  .grid-40-60 {
+    display: grid;
+    grid-template-columns: 41% 57%;
+    gap: 2%;
+    align-items: center;
+  }
+  .grid-45-55 {
+    display: grid;
+    grid-template-columns: 44% 54%;
+    gap: 2%;
+    align-items: center;
+  }
+  .card {
+    background: #f8fafc;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 3.8mm 4.5mm;
+  }
+  .card-accent {
+    background: #eff6ff;
+    border: 1px solid #93c5fd;
+    border-left: 4px solid #1d4ed8;
+    border-radius: 6px;
+    padding: 3.5mm 4.5mm;
+  }
+  .card-green {
+    background: #f0fdf4;
+    border: 1px solid #86efac;
+    border-left: 4px solid #16a34a;
+    border-radius: 6px;
+    padding: 3.5mm 4.5mm;
+  }
+  .card h3, .card-accent h3, .card-green h3 {
+    margin: 0 0 2mm 0;
+    font-size: 11pt;
+    color: #0f172a;
+  }
+  p, li {
+    font-size: 9.6pt;
+    line-height: 1.38;
+    margin: 0 0 1.6mm 0;
+  }
+  ul { margin: 0; padding-left: 4.8mm; }
+  code {
+    font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+    font-size: 8.4pt;
+    background: #e2e8f0;
+    padding: 0.4mm 1.3mm;
+    border-radius: 3px;
+    color: #0f172a;
+  }
+  .kpi-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4mm;
+  }
+  .kpi {
+    background: rgba(255,255,255,0.10);
+    border: 1px solid rgba(255,255,255,0.24);
+    border-radius: 8px;
+    padding: 3.8mm 4mm;
+  }
+  .kpi .v { font-size: 17pt; font-weight: 800; color: #93c5fd; }
+  .kpi .l { font-size: 8.6pt; color: #e2e8f0; margin-top: 1mm; line-height: 1.28; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 8.1pt;
+  }
+  th {
+    background: #0f172a;
+    color: #ffffff;
+    padding: 1.7mm 2.2mm;
+    text-align: left;
+    font-weight: 600;
+  }
+  td {
+    padding: 1.45mm 2.2mm;
+    border-bottom: 1px solid #cbd5e1;
+  }
+  tr:nth-child(even) td { background: #f8fafc; }
+  .img-wrap {
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 2mm;
+    text-align: center;
+  }
+  .img-wrap img {
+    max-width: 100%;
+    max-height: 104mm;
+    width: auto;
+    height: auto;
+    display: block;
+    margin: 0 auto;
+  }
+  .img-cap {
+    font-size: 7.8pt;
+    color: #475569;
+    margin-top: 1.2mm;
+  }
+  .eq-banner {
+    background: #0f172a;
+    color: #f8fafc;
+    border-radius: 6px;
+    padding: 2.5mm 4mm;
+    text-align: center;
+    font-size: 9.5pt;
+    font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  .footer {
+    display: flex;
+    justify-content: space-between;
+    font-size: 7.6pt;
+    color: #64748b;
+    border-top: 1px solid #e2e8f0;
+    padding-top: 1.8mm;
+    margin-top: 2mm;
+    flex-shrink: 0;
+  }
+</style>
+</head>
+<body>
+
+<!-- SLIDE 1: TITLE -->
+<section class="slide title-slide">
+  <div>
+    <div style="display:inline-block;background:rgba(59,130,246,0.25);border:1px solid #60a5fa;border-radius:999px;padding:1.5mm 4mm;font-size:8.8pt;font-weight:700;letter-spacing:0.6px;margin-bottom:4mm;">
+      FINAL-YEAR B.TECH ELECTRICAL ENGINEERING RESEARCH PRESENTATION &bull; 50.0 HZ STANDARD
+    </div>
+    <h1 style="font-size:23.5pt;line-height:1.18;margin:0 0 3.5mm 0;color:#ffffff;">
+      Early PMU-Based Prediction of Frequency Nadir &amp; Security Status in Renewable-Integrated Multi-Area Power Systems Under Limited Observation
+    </h1>
+    <p style="font-size:11pt;color:#cbd5e1;margin:0;">
+      Mentor: <strong style="color:#ffffff;">Dr. Deepak Kumar Gupta</strong> &nbsp;|&nbsp; 4-Member Final-Year B.Tech Research Team &nbsp;|&nbsp; IEEE 39-Bus 10-Machine Benchmark (H<sub>39</sub> = 42.0 s)
+    </p>
+  </div>
+
+  <div class="kpi-strip">
+    <div class="kpi">
+      <div class="v">750 Scenarios</div>
+      <div class="l">Disjoint ID (148/70/52) + 480 OOD<br>14/14 Data &amp; 232/232 Tests PASS</div>
+    </div>
+    <div class="kpi">
+      <div class="v">3.4 &ndash; 7.7 mHz</div>
+      <div class="l">Held-Out ID Test Nadir MAE<br>(Ridge 3.4 mHz | GBDT 7.7 mHz)</div>
+    </div>
+    <div class="kpi">
+      <div class="v">0.0080 Brier</div>
+      <div class="l">Calibrated GBDT (PR-AUC 1.0000)<br>0 Missed Emergencies @ &tau; = 0.70</div>
+    </div>
+    <div class="kpi">
+      <div class="v">2.38 ms (52.7&times;)</div>
+      <div class="l">6-Stage Hardware Online Latency<br>vs. 125.38 ms 10-s ODE Sim</div>
+    </div>
+  </div>
+
+  <div style="display:flex;justify-content:space-between;font-size:8.4pt;color:#94a3b8;border-top:1px solid rgba(255,255,255,0.18);padding-top:2.5mm;">
+    <span>Standardized on 50.0 Hz Nominal / 49.50 Hz IEGC Security Criterion / 50 &amp; 25 fps IEEE C37.118</span>
+    <span>Slide 1 / 16</span>
+  </div>
+</section>
+
+<!-- SLIDE 2: PROBLEM STATEMENT -->
+<section class="slide">
+  <div class="top-bar">
+    <div>
+      <div class="sec">1. Engineering Motivation &amp; Problem Statement</div>
+      <h2>Why Low-Inertia 50.0 Hz Grids Need Sub-Second Pre-Nadir Screening</h2>
+    </div>
+    <div class="slide-num">2 / 16</div>
+  </div>
+  <div class="content">
+    <div class="grid-2">
+      <div class="card">
+        <h3>Physical Vulnerability Under Renewable Displacement</h3>
+        <ul>
+          <li><strong>50.0 Hz Synchronous Balance:</strong> Following a sudden generator trip at <code>t<sub>0</sub> = 1.0 s</code> (<code>80&ndash;1,200 MW</code>), kinetic energy is immediately drained from online turbine rotors.</li>
+          <li><strong>Zero-Inertia GFL Converters:</strong> Displacing <code>10%&ndash;50%</code> of synchronous units with constant-PQ solar/wind converters (<code>H<sub>vir</sub> = 0</code>) cuts system inertia <code>H<sub>tot</sub></code> from <code>324.7 s</code> down to <code>174.6 s</code>.</li>
+          <li><strong>Compressed Containment Margin:</strong> COI frequency plunges to <code>f<sub>nadir</sub></code> within <code>1.78&ndash;2.70 s</code> post-fault (<code>t<sub>nadir</sub> &isin; [2.78, 3.70] s</code>); breaching <code>f<sub>secure</sub> = 49.50 Hz</code> risks emergency UFLS Stage-1 load shedding.</li>
+        </ul>
+      </div>
+      <div class="card-accent">
+        <h3>The Operational Screening Bottleneck</h3>
+        <ul>
+          <li><strong>SCADA Is Too Slow:</strong> Polling every <code>2&ndash;4 s</code> misses the entire primary arrest trajectory.</li>
+          <li><strong>Time-Domain ODE Integration Is Heavy:</strong> Integrating 30 nonlinear swing + governor ODEs takes <code>125.38 ms</code> median per <code>10 s</code> run (&gt;1 min for 500+ contingencies).</li>
+          <li><strong>Full-Trajectory ML Gives Zero Warning:</strong> Observing post-nadir samples violates causality and leaves zero lead time for Fast Frequency Response (FFR).</li>
+        </ul>
+      </div>
+    </div>
+    <div class="card-green">
+      <h3>Core Scientific Problem</h3>
+      <p style="margin:0;">Determine whether a strictly causal early window <code>[t<sub>0</sub>, t<sub>0</sub> + T<sub>obs</sub>]</code> (<code>T<sub>obs</sub> &isin; {0.5, 1.0, 1.5, 2.0} s</code>) of observable 50 fps wide-area PMU measurements suffices to predict continuous future <code>f<sub>nadir</sub></code> and calibrated <code>P(f<sub>nadir</sub> &ge; 49.50 Hz)</code> with zero missed emergencies across unseen renewable/load regimes, noisy channels, and sparse PMU coverage.</p>
+    </div>
+  </div>
+  <div class="footer"><span>Early PMU-Based Frequency-Security Assessment (50.0 Hz)</span><span>Problem Statement</span></div>
+</section>
+
+<!-- SLIDE 3: RESEARCH GAP -->
+<section class="slide">
+  <div class="top-bar">
+    <div>
+      <div class="sec">2. 2021&ndash;2026 State-of-the-Art &amp; Validated Research Gap</div>
+      <h2>Positioning Beyond Generic &ldquo;PMU + Machine Learning&rdquo;</h2>
+    </div>
+    <div class="slide-num">3 / 16</div>
+  </div>
+  <div class="content">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:20%">Literature Stream</th>
+          <th style="width:28%">Representative Sources</th>
+          <th style="width:26%">What Is Already Solved</th>
+          <th style="width:26%">Remaining Limitation Addressed Here</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Analytical FSA</strong></td><td>Kundur [1]; Zhang et al. 2022 [7]</td><td>Closed-form nadir with limiter modules</td><td>Requires known online <code>H<sub>eff</sub></code> &amp; single-area aggregation</td></tr>
+        <tr><td><strong>Low-Inertia ML</strong></td><td>Li et al. [8]; Neurocomputing 2025 [10]</td><td>Fast tree/ML nadir prediction under RES</td><td>Often lacks probability calibration &amp; multi-axis OOD audit</td></tr>
+        <tr><td><strong>Deep Spatiotemporal</strong></td><td>Wang et al. CNN [9]; Wu et al. 2026 [15]</td><td>End-to-end multi-bus waveform learning</td><td>Black-box complexity without earliness-vs-lead-time curve</td></tr>
+        <tr><td><strong>Partial / Noisy PMU</strong></td><td>GAIN-DSA 2025 [11]; He et al. 2026 [13]</td><td>40% PMU coverage &amp; missing-data recovery</td><td>Evaluated separately from strict pre-nadir causal calibration</td></tr>
+        <tr><td><strong>Safety-Aware DSA</strong></td><td>Aygul [14]; <code>DSA-SafetyBench</code> 2026 [16]</td><td>Exposes false-secure failures under shifts</td><td>Motivates our cross-fit Platt/PAVA + <code>&tau;=0.70</code> safety protocol</td></tr>
+      </tbody>
+    </table>
+    <div class="card-accent">
+      <h3>Validated Methodological Novelty</h3>
+      <p style="margin:0;">A unified, strictly leakage-free benchmark combining: <strong>(1)</strong> scenario-verified pre-nadir causality (<code>t<sub>0</sub>+T<sub>obs</sub> &lt; t<sub>nadir</sub></code>) &amp; <code>raw_sim</code>/<code>raw</code> channel isolation, <strong>(2)</strong> unsmoothed <code>0.5&ndash;2.0 s</code> earliness sweep, <strong>(3)</strong> <code>480</code>-scenario OOD domain shifts, <strong>(4)</strong> <code>0&ndash;50 mHz</code> noise + <code>13/39</code> sparse PMU + <code>25 fps</code> ablations, and <strong>(5)</strong> calibrated asymmetric false-secure control.</p>
+    </div>
+  </div>
+  <div class="footer"><span>Verified Literature Synthesis ([1]&ndash;[24])</span><span>Research Gap</span></div>
+</section>
+
+<!-- SLIDE 4: SYSTEM ARCHITECTURE -->
+<section class="slide">
+  <div class="top-bar">
+    <div>
+      <div class="sec">3. System &amp; Screening Architecture</div>
+      <h2>IEEE 39-Bus 3-Area Topology &amp; Five-Stage Causal PMU Pipeline</h2>
+    </div>
+    <div class="slide-num">4 / 16</div>
+  </div>
+  <div class="content">
+    <div class="img-wrap" style="flex:1;display:flex;flex-direction:column;justify-content:center;">
+      <img src="../results/figures/fig01_system_and_architecture.png" alt="System Topology and Causal Architecture" style="max-height:116mm;">
+      <div class="img-cap">Left: 39 buses, 46 branches, 10 generators across Areas 1&ndash;3, primary tie-lines (<code>1&ndash;39</code>, <code>4&ndash;5</code>, <code>16&ndash;17</code>), and sparse 13-bus PMU subset. Right: Causal online pipeline.</div>
+    </div>
+  </div>
+  <div class="footer"><span>Source: results/figures/fig01_system_and_architecture.png</span><span>System Architecture</span></div>
+</section>
+
+<!-- SLIDE 5: 50-HZ SIMULATION & DISCONNECTION PHYSICS -->
+<section class="slide">
+  <div class="top-bar">
+    <div>
+      <div class="sec">4. Power-System Physics &amp; Renewable Disconnection Model</div>
+      <h2>50.0 Hz NR Power Flow, Machine-Base Droop &amp; Complete/Partial Trips</h2>
+    </div>
+    <div class="slide-num">5 / 16</div>
+  </div>
+  <div class="content">
+    <div class="eq-banner">
+      d&delta;<sub>i</sub>/dt = (2&pi;&middot;50)&Delta;&omega;<sub>i</sub> &nbsp;|&nbsp;
+      2H<sub>i</sub>(d&Delta;&omega;<sub>i</sub>/dt) = P<sub>m,i</sub> &minus; P<sub>e,i</sub>(&delta;) &minus; D<sub>i</sub>&Delta;&omega;<sub>i</sub> &nbsp;|&nbsp;
+      T<sub>g,i</sub>(dP<sub>m,i</sub>/dt) = P<sub>m0,i</sub> &minus; &Delta;&omega;<sub>i</sub>/R<sub>sys,i</sub> &minus; P<sub>m,i</sub>
+    </div>
+    <div class="grid-40-60">
+      <div class="card">
+        <h3>Key Physical Modelling Upgrades</h3>
+        <ul>
+          <li><strong>Regional Bus-39 Default:</strong> <code>H<sub>39</sub> = 42.0 s</code> (<code>H<sub>tot</sub> = 324.7 s</code>) yields realistic regional nadirs (<code>48.26&ndash;49.91 Hz</code>).</li>
+          <li><strong>Exact NR Power Flow:</strong> Converges to <code>&lt; 10<sup>&minus;11</sup> pu</code> across <code>0.80&ndash;1.20&times;</code> load (<code>0.0000 Hz</code> flat-run drift).</li>
+          <li><strong>Machine-Base 5% Droop:</strong> <code>R<sub>sys,i</sub> = 0.05 &middot; (100 / S<sub>mva,i</sub>)</code>, <code>T<sub>g</sub> = 4.20 s</code>.</li>
+          <li><strong>Outage Physics:</strong> <code>&eta; = 1.0</code> disconnects unit <code>j</code> from <code>Y<sub>red,post</sub></code> &amp; <code>H<sub>post</sub></code> (<code>P<sub>e,post,j</sub> = 0</code>); <code>&eta; &isin; {0.7, 0.4}</code> scales plant parameters by <code>1 &minus; &eta;</code>.</li>
+          <li><strong>Linear 9-Bus RES:</strong> <code>p<sub>ren,realized</sub> = 9.93%&ndash;49.66%</code> (zero saturation).</li>
+        </ul>
+      </div>
+      <div class="img-wrap">
+        <img src="../results/figures/fig02_generation_loss_response.png" alt="Generation Loss and Inertia Sweep" style="max-height:88mm;">
+        <div class="img-cap">Complete vs. partial outage, 10%&ndash;50% RES inertia derating, and 3-area swings vs. COI.</div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>Modules: ieee39_data.py, renewables.py, dynamic_engine.py</span><span>Simulation Physics</span></div>
+</section>
+
+<!-- SLIDE 6: PMU PIPELINE & CAUSAL WINDOW -->
+<section class="slide">
+  <div class="top-bar">
+    <div>
+      <div class="sec">5. Synchrophasor Emulation &amp; Pre-Nadir Causality</div>
+      <h2>IEEE C37.118 PMU Stream, Causal 5-Point OLS ROCOF &amp; Lead Time</h2>
+    </div>
+    <div class="slide-num">6 / 16</div>
+  </div>
+  <div class="content">
+    <div class="grid-40-60">
+      <div style="display:flex;flex-direction:column;gap:3.5mm;">
+        <div class="card">
+          <h3>Zero-Leakage PMU Architecture</h3>
+          <ul>
+            <li><strong>Channel Firewall:</strong> Internal rotor states stay in <code>data/raw_sim/</code>; ML sees only observable PMU files in <code>data/raw/</code>.</li>
+            <li><strong>Area-Weighted <code>f<sub>sys,pmu</sub></code>:</strong> Reconstructed strictly from observed bus frequencies <code>(9&mu;<sub>A1</sub> + 15&mu;<sub>A2</sub> + 15&mu;<sub>A3</sub>)/39</code>.</li>
+            <li><strong>Wrap-Safe C37.118 Stream:</strong> Unwrapped radian interpolation at <code>50 fps</code> / <code>25 fps</code> + binary <code>CRC-CCITT</code> framing.</li>
+          </ul>
+        </div>
+        <div class="card-accent">
+          <h3>Causal 5-Pt Backward OLS ROCOF</h3>
+          <p style="margin:0;"><code>0.1&middot;fps&middot;[2(f<sub>n</sub>&minus;f<sub>n-4</sub>) + f<sub>n-1</sub>&minus;f<sub>n-3</sub>]</code> cuts 5 mHz noise variance from <code>4.6421</code> (2-pt) to <code>0.001616</code> (<strong>99.97% reduction</strong>, ratio <code>0.0003</code>).</p>
+        </div>
+      </div>
+      <div class="img-wrap">
+        <img src="../results/figures/fig03_causal_window_illustration.png" alt="Causal Window and Lead Time" style="max-height:98mm;">
+        <div class="img-cap"><code>100.0%</code> pre-nadir causal across <code>0.5&ndash;1.5 s</code> (<code>750/750</code>); mean lead time <code>1.27 s</code> at <code>T<sub>obs</sub> = 1.0 s</code>.</div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>Modules: pmu_recorder.py, window_slicer.py</span><span>PMU &amp; Causal Window</span></div>
+</section>
+
+<!-- SLIDE 7: CANONICAL 14 FEATURES -->
+<section class="slide">
+  <div class="top-bar">
+    <div>
+      <div class="sec">6. Spatiotemporal Feature Engineering</div>
+      <h2>Canonical 14 PMU Features Across Four Physical Signal Families</h2>
+    </div>
+    <div class="slide-num">7 / 16</div>
+  </div>
+  <div class="content">
+    <div class="grid-45-55">
+      <table>
+        <thead><tr><th>#</th><th>Canonical Feature</th><th>Units</th><th>Physical Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>1&ndash;4</td><td><code>rocof_init</code>, <code>rocof_peak_neg</code>, <code>rocof_end</code>, <code>rocof_mean</code></td><td>Hz/s</td><td>Initial 100 ms OLS, peak neg, end &amp; window OLS ROCOF</td></tr>
+          <tr><td>5&ndash;6</td><td><code>freq_drop_end</code>, <code>freq_drop_max</code></td><td>Hz</td><td>Boundary &amp; peak wide-area frequency drop</td></tr>
+          <tr><td>7</td><td><code>freq_dev_integral</code></td><td>Hz&middot;s</td><td>Cumulative kinetic-energy deficit (#1 predictor)</td></tr>
+          <tr><td>8</td><td><code>bus_drop_worst</code></td><td>Hz</td><td>Deepest local substation dip across <code>B<sub>obs</sub></code></td></tr>
+          <tr><td>9&ndash;10</td><td><code>area_freq_spread_max</code>, <code>bus_freq_std_mean</code></td><td>Hz</td><td>3-area separation &amp; spatial bus dispersion</td></tr>
+          <tr><td>11&ndash;12</td><td><code>angle_divergence_max</code>, <code>tie_line_angle_excursion</code></td><td>deg</td><td>Network angle span &amp; tie-lines (4-5, 1-39, 16-17)</td></tr>
+          <tr><td>13&ndash;14</td><td><code>freq_curvature_init</code>, <code>freq_curvature_mean</code></td><td>Hz/s&sup2;</td><td>2nd-derivative governor arrest curvature <code>d&sup2;f/dt&sup2;</code></td></tr>
+        </tbody>
+      </table>
+      <div class="img-wrap">
+        <img src="../results/figures/fig04_pmu_and_feature_distributions.png" alt="Feature Distributions and Correlations" style="max-height:99mm;">
+        <div class="img-cap">Class separation (303 Secure vs. 447 Insecure) and 14&times;14 Spearman correlation matrix.</div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>Module: src/pmu_fsa/features/extractor.py (Full 14-Column Schema)</span><span>Feature Engineering</span></div>
+</section>
+
+<!-- SLIDE 8: 750-SCENARIO DATASET & SPLITS -->
+<section class="slide">
+  <div class="top-bar">
+    <div>
+      <div class="sec">7. Dataset Generation, Quality Audit &amp; Disjoint Partitioning</div>
+      <h2>750 Contingencies With Strict Scenario-Hash Isolation</h2>
+    </div>
+    <div class="slide-num">8 / 16</div>
+  </div>
+  <div class="content">
+    <table>
+      <thead>
+        <tr>
+          <th>Partition</th>
+          <th>Regime</th>
+          <th>Operating Domain Definition</th>
+          <th>Scenarios (N)</th>
+          <th>Share</th>
+          <th>Secure (&ge;49.50 Hz)</th>
+          <th>Insecure (&lt;49.50 Hz)</th>
+          <th>Mean / Min Nadir (Hz)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td><code>train</code></td><td><code>id</code></td><td>RES &isin; {10, 20, 30}%, Load &isin; {0.90, 1.00, 1.10}&times;</td><td><strong>148</strong></td><td>19.73%</td><td>71 (48.0%)</td><td>77 (52.0%)</td><td>49.4612 / 48.7188</td></tr>
+        <tr><td><code>val</code></td><td><code>id</code></td><td>RES &isin; {10, 20, 30}%, Load &isin; {0.90, 1.00, 1.10}&times;</td><td><strong>70</strong></td><td>9.33%</td><td>34 (48.6%)</td><td>36 (51.4%)</td><td>49.4395 / 48.7358</td></tr>
+        <tr><td><code>test</code></td><td><code>id</code></td><td>Held-Out ID (Zero Training Overlap)</td><td><strong>52</strong></td><td>6.93%</td><td>21 (40.4%)</td><td>31 (59.6%)</td><td>49.4271 / 48.8165</td></tr>
+        <tr><td><code>ood_test</code></td><td><code>ood_res</code></td><td>Unseen High RES (40&ndash;50%), Seen Load (0.90&ndash;1.10&times;)</td><td><strong>180</strong></td><td>24.00%</td><td>49 (27.2%)</td><td>131 (72.8%)</td><td>49.2054 / 48.2689</td></tr>
+        <tr><td><code>ood_test</code></td><td><code>ood_load</code></td><td>Seen RES (10&ndash;30%), Unseen Extreme Load {0.80, 1.20}&times;</td><td><strong>180</strong></td><td>24.00%</td><td>95 (52.8%)</td><td>85 (47.2%)</td><td>49.4874 / 48.7342</td></tr>
+        <tr><td><code>ood_test</code></td><td><code>ood_combined</code></td><td>Simultaneous High RES (40&ndash;50%) + Load {0.80, 1.20}&times;</td><td><strong>120</strong></td><td>16.00%</td><td>33 (27.5%)</td><td>87 (72.5%)</td><td>49.2595 / 48.2556</td></tr>
+        <tr><td><strong>Total</strong></td><td><strong>All</strong></td><td><strong>10 Buses &times; 3 Losses &times; 5 RES &times; 5 Loads</strong></td><td><strong>750</strong></td><td><strong>100.0%</strong></td><td><strong>303 (40.4%)</strong></td><td><strong>447 (59.6%)</strong></td><td><strong>49.3694 / 48.2556</strong></td></tr>
+      </tbody>
+    </table>
+    <div class="grid-2">
+      <div class="card">
+        <h3>14 Data Checks &amp; 232 Automated Tests: 100% PASS</h3>
+        <p style="margin:0;">Zero duplicate IDs, zero channel leaks, uniform <code>1/fps</code> timestamps, exact COI labels, SHA-256 manifest verification, and <code>232</code> isolated production tests (<code>83</code> unit + <code>149</code> E2E).</p>
+      </div>
+      <div class="card-green">
+        <h3>Strict Anti-Leakage Training Protocol</h3>
+        <p style="margin:0;">Hyperparameters &amp; model selection evaluated strictly on <code>val</code> (<code>N=70</code>); final models use 5-fold cross-fitting on <code>train+val</code> (<code>N=218</code>) and evaluate once on untouched <code>test</code> (<code>52</code>) &amp; <code>ood_test</code> (<code>480</code>).</p>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>Report: results/dataset_quality_report.md &amp; data/manifest.json</span><span>Dataset &amp; Splits</span></div>
+</section>
+
+<!-- SLIDE 9: ML BASELINES & CALIBRATED GBDT -->
+<section class="slide">
+  <div class="top-bar">
+    <div>
+      <div class="sec">8. Machine Learning &amp; Probability Calibration Methodology</div>
+      <h2>Seven Baselines + Physics-Guided Two-Stage Calibrated GBDT</h2>
+    </div>
+    <div class="slide-num">9 / 16</div>
+  </div>
+  <div class="content">
+    <div class="grid-2">
+      <div class="card">
+        <h3>7 Regressors &amp; 7 Classifiers Benchmarked</h3>
+        <ul>
+          <li><strong>Physics &amp; Simple Baselines:</strong> Constant Mean, <code>AnalyticalSwingNadirRegressor</code> (quadratic + parabolic swing vertex <code>&minus;r<sub>0</sub>&sup2; / 2|c&#772;|</code>), and <code>StandardScaler</code> + Ridge / Logistic Regression.</li>
+          <li><strong>Non-Linear Tree Ensembles:</strong> CART Decision Tree (<code>depth=5</code>), Random Forest (<code>100</code> trees), GBDT (<code>100</code> trees, <code>lr=0.08</code>, <code>depth=4</code>), and LightGBM (<code>HistGBDT</code>, <code>15</code> leaves).</li>
+          <li><strong>Physical Target Bounds:</strong> Continuous predictions bounded to <code>[45.0, 50.5] Hz</code>.</li>
+        </ul>
+      </div>
+      <div class="card-accent">
+        <h3>Proposed <code>CalibratedGBDTClassifier</code></h3>
+        <ul>
+          <li><strong>Stage 1 (Continuous Margin):</strong> Predicts continuous <code>s(x) = f&#770;<sub>nadir</sub>(x)</code> in Hz so <code>49.49 Hz</code> and <code>48.26 Hz</code> retain physical distance from <code>49.50 Hz</code>.</li>
+          <li><strong>Stage 2 (5-Fold Cross-Fit Calibration, N<sub>cal</sub>=218):</strong>
+            <br>&bull; <em>Platt Scaling:</em> Monotonic L-BFGS sigmoid (<code>A = 71.81 &gt; 0</code>).
+            <br>&bull; <em>PAVA Isotonic:</em> <code>216</code> non-parametric knots (<code>fallback_used = False</code>).</li>
+          <li><strong>Stage 3 (OOD-Aware 95% PIs):</strong> Quantile GBDT (<code>&alpha;=0.025, 0.975</code>) + OOF conformal <code>q<sub>95</sub></code> + feature-space distance inflation.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="eq-banner">
+      P&#770;(Secure | s) = 1 / [1 + exp(&minus;(A&middot;f&#770;<sub>nadir</sub> + B))] &nbsp;&nbsp;|&nbsp;&nbsp;
+      Safety Metric: FNR<sub>insecure</sub> = FP<sub>secure</sub> / (TN<sub>insecure</sub> + FP<sub>secure</sub>)
+    </div>
+  </div>
+  <div class="footer"><span>Modules: regressors.py, classifiers.py, calibrated_gb.py</span><span>ML Methodology</span></div>
+</section>
+
+<!-- SLIDE 10: REGRESSION RESULTS -->
+<section class="slide">
+  <div class="top-bar">
+    <div>
+      <div class="sec">9. Experimental Results &mdash; Continuous Nadir Regression</div>
+      <h2>Sub-8 mHz Tree Accuracy &amp; 3.4 mHz Smooth Basis Interpolation</h2>
+    </div>
+    <div class="slide-num">10 / 16</div>
+  </div>
+  <div class="content">
+    <div class="grid-2" style="align-items:center;">
+      <div class="img-wrap">
+        <img src="../results/figures/fig06_regression_model_comparison.png" alt="7 Regressors Comparison" style="max-height:76mm;">
+        <div class="img-cap">All 7 regressors on held-out ID test (<code>N=52</code>, <code>T<sub>obs</sub>=1.0 s</code>) with 95% bootstrap CIs.</div>
+      </div>
+      <div class="img-wrap">
+        <img src="../results/figures/fig05_nadir_parity_and_residuals.png" alt="Parity and Residuals" style="max-height:76mm;">
+        <div class="img-cap">ID parity (<code>MAE=7.7 mHz, R&sup2;=0.9980, 98.1% PI cov</code>) &amp; OOD parity (<code>MAE=18.4 mHz</code>).</div>
+      </div>
+    </div>
+    <div class="card-accent">
+      <p style="margin:0;"><strong>Key Scientific Insight:</strong> Ridge Linear (<code>3.4 mHz</code>, <code>R&sup2;=0.9997</code>) and Analytical Swing (<code>4.2 mHz</code>, <code>R&sup2;=0.9995</code>) achieve the lowest clean ID MAE because classical 3rd-order swing + droop ODEs form a smooth surface free of tree-leaf discretization (<code>~5&ndash;8 mHz</code>), while GBDT leads all tree models (<code>7.7 mHz</code> vs. RF <code>9.0 mHz</code>, <code>p=0.044</code>; DT <code>11.1 mHz</code>, <code>p=0.004</code>) and powers quantile intervals.</p>
+    </div>
+  </div>
+  <div class="footer"><span>Table: results/tables/nadir_regression.md</span><span>Regression Results</span></div>
+</section>
+
+<!-- SLIDE 11: CLASSIFICATION & SAFETY -->
+<section class="slide">
+  <div class="top-bar">
+    <div>
+      <div class="sec">10. Security Classification &amp; Asymmetric Safety Analysis</div>
+      <h2>Zero Missed Insecure Emergencies via Conservative Thresholding (&tau; = 0.70)</h2>
+    </div>
+    <div class="slide-num">11 / 16</div>
+  </div>
+  <div class="content">
+    <div class="img-wrap">
+      <img src="../results/figures/fig07_classification_and_safety.png" alt="Classification and Threshold Sweep" style="max-height:82mm;">
+    </div>
+    <div class="grid-2">
+      <div class="card">
+        <h3>Default Symmetric Cutoff (&tau; = 0.50)</h3>
+        <p style="margin:0;">Calibrated GBDT achieves <code>PR-AUC = 1.0000</code>, <code>ROC-AUC = 1.0000</code>, and <code>F<sub>1</sub> = 0.9767</code> (<code>TP=21, TN=30, FP=1, FN=0</code>), missing only <code>1</code> borderline insecure case near <code>49.50 Hz</code> (<code>FNR<sub>insecure</sub> = 3.23%</code>).</p>
+      </div>
+      <div class="card-green">
+        <h3>Safety-Optimal Cutoff (&tau; = 0.70)</h3>
+        <p style="margin:0;">Requiring <code>P&#770;(Secure) &ge; 0.70</code> eliminates <strong>100% of missed insecure emergencies</strong> (<code>Missed_Insecure = 0/31</code>, <code>FNR<sub>insecure</sub> = 0.0000</code>) with only <code>1</code> conservative false alarm (<code>FPR<sub>secure</sub> = 4.76%</code>, <code>F<sub>1</sub> = 0.9756</code>).</p>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>Tables: security_classification.md &amp; threshold_sweep.md</span><span>Classification &amp; Safety</span></div>
+</section>
+
+<!-- SLIDE 12: CALIBRATION RELIABILITY -->
+<section class="slide">
+  <div class="top-bar">
+    <div>
+      <div class="sec">11. Probability Calibration &amp; Reliability Analysis</div>
+      <h2>Cross-Fitted Platt vs. 216-Knot PAVA Isotonic Calibration</h2>
+    </div>
+    <div class="slide-num">12 / 16</div>
+  </div>
+  <div class="content">
+    <div class="grid-40-60">
+      <div>
+        <table>
+          <thead><tr><th>Model</th><th>Val Brier</th><th>Test Brier</th><th>Test ECE</th><th>PR-AUC</th></tr></thead>
+          <tbody>
+            <tr><td>Uncalibrated GBDT</td><td>0.0143</td><td>0.0192</td><td>0.0193</td><td>0.9773</td></tr>
+            <tr><td><strong>Platt GBDT</strong></td><td><strong>0.0056</strong></td><td>0.0141</td><td>0.0267</td><td><strong>1.0000</strong></td></tr>
+            <tr><td><strong>PAVA Isotonic</strong></td><td>0.0063</td><td><strong>0.0080</strong></td><td><strong>0.0192</strong></td><td><strong>1.0000</strong></td></tr>
+          </tbody>
+        </table>
+        <div class="card-accent" style="margin-top:3.5mm;">
+          <h3>Calibration Findings</h3>
+          <ul>
+            <li>Both calibrators fit natively on <code>N<sub>cal</sub> = 218</code> OOF predictions (<code>fallback_used = False</code>).</li>
+            <li>Platt achieves lowest <code>val</code> Brier (<code>0.0056</code>); PAVA Isotonic achieves lowest <code>test</code> Brier (<code>0.0080</code>, <code>p &lt; 0.0001</code>) and <code>0.0069</code> ECE across all <code>532</code> held-out runs.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="img-wrap">
+        <img src="../results/figures/fig08_calibration_reliability.png" alt="Calibration Reliability Diagram" style="max-height:99mm;">
+        <div class="img-cap">Empirical calibration mappings, 10-bin reliability diagram (N=532), and Brier/ECE comparison.</div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>Table: results/tables/calibration_comparison.md</span><span>Calibration Analysis</span></div>
+</section>
+
+<!-- SLIDE 13: WINDOW SENSITIVITY & OOD GENERALIZATION -->
+<section class="slide">
+  <div class="top-bar">
+    <div>
+      <div class="sec">12. Earliness Trade-Off &amp; Out-of-Distribution Generalization</div>
+      <h2>Observation-Window Sweep (0.5&ndash;2.0 s) &amp; 480-Scenario Domain Shift</h2>
+    </div>
+    <div class="slide-num">13 / 16</div>
+  </div>
+  <div class="content">
+    <div class="grid-2" style="align-items:center;">
+      <div class="img-wrap">
+        <img src="../results/figures/fig09_window_sensitivity.png" alt="Window Sensitivity" style="max-height:78mm;">
+        <div class="img-cap"><code>T<sub>obs</sub> = 1.0&ndash;1.5 s</code> achieves <code>6.9&ndash;7.7 mHz</code> ID MAE with <code>0.79&ndash;1.29 s</code> mean lead time.</div>
+      </div>
+      <div class="img-wrap">
+        <img src="../results/figures/fig10_ood_generalization.png" alt="OOD Generalization" style="max-height:78mm;">
+        <div class="img-cap"><code>OOD-RES</code> achieves <code>100.0% F<sub>1</sub></code> (<code>0</code> missed) and widens 95% PIs by <code>+12.3%</code> (<code>0.743 Hz</code>).</div>
+      </div>
+    </div>
+    <div class="card">
+      <p style="margin:0;"><strong>OOD Breakdown (N = 480):</strong> <code>OOD-Load</code> matches ID (<code>7.8 mHz</code> MAE, <code>0.9792 F<sub>1</sub></code>); <code>OOD-RES (40&ndash;50%)</code> reaches <code>26.7 mHz</code> MAE due to unseen <code>48.27 Hz</code> low-inertia nadirs below the <code>48.72 Hz</code> training leaf floor, yet preserves <strong>1.0000 Security F<sub>1</sub></strong> because <code>49.50 Hz</code> lies inside training support (pooled <code>OOD-All</code>: <code>18.4 mHz</code> MAE, <code>0.9860 F<sub>1</sub></code>, <code>0.0224 ECE</code>).</p>
+    </div>
+  </div>
+  <div class="footer"><span>Tables: window_sensitivity.md &amp; ood_regime_breakdown.md</span><span>Window &amp; OOD Robustness</span></div>
+</section>
+
+<!-- SLIDE 14: NOISE, PARTIAL PMU & 25 FPS -->
+<section class="slide">
+  <div class="top-bar">
+    <div>
+      <div class="sec">13. Measurement Imperfection &amp; Sparse Observability Stress Tests</div>
+      <h2>Resilience to 0&ndash;50 mHz Noise, 13/39 Sparse PMUs &amp; 25 fps Reporting</h2>
+    </div>
+    <div class="slide-num">14 / 16</div>
+  </div>
+  <div class="content">
+    <div class="grid-45-55">
+      <div style="display:flex;flex-direction:column;gap:3.2mm;">
+        <table>
+          <thead><tr><th>Observability / Noise Condition</th><th>ID MAE</th><th>ID F<sub>1</sub></th><th>OOD MAE</th><th>OOD F<sub>1</sub></th></tr></thead>
+          <tbody>
+            <tr><td>Clean 39-Bus @ 50 fps (<code>train+val</code>)</td><td>7.7 mHz</td><td>0.9767</td><td>18.4 mHz</td><td>0.9860</td></tr>
+            <tr><td>PMU Noise <code>&sigma;<sub>f</sub> = 5 mHz</code> (Class M)</td><td>8.2 mHz</td><td>0.9767</td><td>&mdash;</td><td>&mdash;</td></tr>
+            <tr><td>PMU Noise <code>&sigma;<sub>f</sub> = 10 mHz</code></td><td>8.5 mHz</td><td>0.9767</td><td>&mdash;</td><td>&mdash;</td></tr>
+            <tr><td>PMU Noise <code>&sigma;<sub>f</sub> = 50 mHz</code> (Extreme)</td><td>11.4 mHz</td><td>0.9767</td><td>&mdash;</td><td>&mdash;</td></tr>
+            <tr><td>Baseline 39-Bus @ 50 fps (<code>train</code>-fit)</td><td>9.3 mHz</td><td>0.9767</td><td>24.2 mHz</td><td>0.9887</td></tr>
+            <tr><td><strong>Sparse 13/39 PMU (33.3% Buses)</strong></td><td><strong>10.8 mHz</strong></td><td><strong>1.0000</strong></td><td><strong>23.8 mHz</strong></td><td><strong>0.9858</strong></td></tr>
+            <tr><td><strong>Reduced 25 fps Stream</strong></td><td><strong>9.4 mHz</strong></td><td><strong>0.9767</strong></td><td><strong>23.9 mHz</strong></td><td><strong>0.9915</strong></td></tr>
+          </tbody>
+        </table>
+        <div class="card-green">
+          <p style="margin:0;"><strong>Why Noise Degradation Is Minimal:</strong> Area-weighted spatial averaging + 5-pt backward OLS ROCOF + trapezoidal integration keep binary <code>F<sub>1</sub> = 0.9767</code> invariant up to <code>50 mHz</code> noise (<code>MAD &le; 0.0131</code>).</p>
+        </div>
+      </div>
+      <div class="img-wrap">
+        <img src="../results/figures/fig11_pmu_noise_robustness.png" alt="PMU Noise Stress Curves" style="max-height:99mm;">
+        <div class="img-cap">Unsmoothed MAE/RMSE/P95, F<sub>1</sub>/FNR, ECE/Brier, and probability drift across 0&ndash;50 mHz noise.</div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>Tables: measurement_noise.md &amp; feature_ablations.md</span><span>Measurement Robustness</span></div>
+</section>
+
+<!-- SLIDE 15: INTERPRETABILITY & LATENCY -->
+<section class="slide">
+  <div class="top-bar">
+    <div>
+      <div class="sec">14. Physical Interpretability &amp; Computational Speedup</div>
+      <h2>Feature Importance Hierarchy &amp; 2.38 ms Online Latency (52.7&times; Speedup)</h2>
+    </div>
+    <div class="slide-num">15 / 16</div>
+  </div>
+  <div class="content">
+    <div class="grid-2" style="align-items:center;">
+      <div class="img-wrap">
+        <img src="../results/figures/fig12_feature_importance_and_ablation.png" alt="Feature Importance and Ablations" style="max-height:78mm;">
+        <div class="img-cap"><code>freq_dev_integral</code> ranks #1 (<code>+169.5 mHz &Delta;MAE</code>, 76.5% Gini; 5-seed Spearman <code>0.841</code>).</div>
+      </div>
+      <div class="img-wrap">
+        <img src="../results/figures/fig13_latency_and_learning_curve.png" alt="6-Stage Latency and Learning Curve" style="max-height:78mm;">
+        <div class="img-cap">6-stage median online latency <code>2.3805 ms</code> (<code>3.3641 ms P99</code>) vs. <code>125.3759 ms</code> ODE sim.</div>
+      </div>
+    </div>
+    <div class="card-accent">
+      <p style="margin:0;"><strong>Hardware Latency Breakdown (100 Reps, Intel Core i7-9750H):</strong> Window slicing <code>0.142 ms</code> + 14-feature extraction <code>0.821 ms</code> + regression <code>0.749 ms</code> + classification <code>0.635 ms</code> + calibration <code>0.029 ms</code> = <strong>2.381 ms median</strong> (&lt;1/4 of a single 20 ms PMU frame; well inside the 10 ms budget).</p>
+    </div>
+  </div>
+  <div class="footer"><span>Tables: feature_importance.md, latency_stages.md &amp; learning_curve.md</span><span>Interpretability &amp; Speed</span></div>
+</section>
+
+<!-- SLIDE 16: LIMITATIONS, FUTURE WORK & VIVA SUMMARY -->
+<section class="slide">
+  <div class="top-bar">
+    <div>
+      <div class="sec">15. Limitations, Future Roadmap &amp; Team Viva Summary</div>
+      <h2>Transparent Engineering Boundaries &amp; Four-Member Contribution Map</h2>
+    </div>
+    <div class="slide-num">16 / 16</div>
+  </div>
+  <div class="content">
+    <div class="grid-2">
+      <div class="card">
+        <h3>Explicit Limitations</h3>
+        <ul>
+          <li><strong>Research Prototype Only:</strong> Not certified for autonomous relay tripping without EMS/HIL qualification.</li>
+          <li><strong>Classical 3rd-Order ODEs:</strong> Constant-flux <code>E'</code> &amp; constant-Z Kron loads omit AVR/PSS, boiler limits, and EMT PLL dynamics.</li>
+          <li><strong>Synthetic PMU Front-End:</strong> Additive Gaussian noise + OLS rather than sub-cycle DFT filters or bursty packet loss.</li>
+          <li><strong>Tree OOD Tail Floor:</strong> Leaf predictions floor at <code>48.72 Hz</code> on unseen <code>50%</code> RES nadirs (<code>48.26 Hz</code>).</li>
+        </ul>
+      </div>
+      <div class="card-green">
+        <h3>Future Research Extensions</h3>
+        <ul>
+          <li><strong>Physics-Residual Hybrid Boosting:</strong> Fit GBDT residuals atop <code>AnalyticalSwingNadirRegressor</code> for exact OOD tail extrapolation.</li>
+          <li><strong>Grid-Forming Converters:</strong> Virtual inertia (<code>H<sub>vir</sub> &gt; 0</code>), governor deadbands &amp; turbine rate limiters.</li>
+          <li><strong>Cyber-Resilient Sparse WAMS:</strong> Packet dropout imputation &amp; <code>N-2</code> line + generator contingencies.</li>
+          <li><strong>OPAL-RT / RTDS HIL Testing:</strong> Live C37.118.2 UDP streaming.</li>
+        </ul>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>Member</th><th>Primary Ownership</th><th>Core Viva Deliverable</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Member 1</strong></td><td>50-Hz Grid &amp; Outage Physics (<code>ieee39_data</code>, <code>dynamic_engine</code>, <code>renewables</code>)</td><td>NR power flow, <code>H<sub>39</sub>=42 s</code>, machine droop, complete/partial Kron disconnection, 9-bus RES</td></tr>
+        <tr><td><strong>Member 2</strong></td><td>PMU Emulation &amp; 14 Causal Features (<code>pmu_recorder</code>, <code>window_slicer</code>, <code>extractor</code>)</td><td><code>raw_sim</code>/<code>raw</code> firewall, area-weighted <code>f<sub>sys,pmu</sub></code>, causal 5-pt OLS ROCOF, 14-check SHA-256 audit</td></tr>
+        <tr><td><strong>Member 3</strong></td><td>ML Suite, Calibration &amp; Safety (<code>regressors</code>, <code>classifiers</code>, <code>calibrated_gb</code>)</td><td>7 regressors (<code>3.4&ndash;7.7 mHz</code>), 5-fold Platt &amp; 216-knot PAVA Isotonic, <code>&tau;=0.70</code> zero missed insecure</td></tr>
+        <tr><td><strong>Member 4</strong></td><td>Robustness, Interpretability &amp; Speed (<code>sensitivity</code>, <code>ood</code>, <code>noise</code>, <code>latency</code>)</td><td><code>0.5&ndash;2.0 s</code> window sweep, <code>480</code> OOD runs, <code>13/39</code> sparse PMU &amp; <code>25 fps</code>, <code>2.38 ms</code> (<code>52.7&times;</code>) speedup</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="footer"><span>Reproduce Everything: .venv/bin/python3 scripts/run_all.py --config configs/default_50hz.yaml --with-figures</span><span>Conclusion &amp; Viva Split</span></div>
+</section>
+
+</body>
+</html>

@@ -1,306 +1,362 @@
-# Early PMU-Based Prediction of Frequency Nadir and Security Status in Renewable-Integrated Multi-Area Power Systems
+# Early PMU-Based Prediction of Frequency Nadir and Security Status in Renewable-Integrated Multi-Area Power Systems Under Limited Observation
 
-This repository implements an end-to-end simulation, feature engineering, and machine learning pipeline (`pmu_fsa`) for early post-disturbance frequency-security assessment on the **IEEE 39-bus, 10-machine** multi-area power system standardized at **50.0 Hz** (`f_secure = 49.50 Hz`, `50 fps` IEEE C37.118 reporting).
-
-Given only a short causal observation window `[t0, t0 + T_obs]` (`0.5 s` to `2.0 s` immediately after a generator outage—several seconds before the actual frequency nadir occurs), the pipeline extracts 14 physical and spatial synchrophasor features and predicts:
-1. **Continuous Frequency Nadir (`f_nadir` in Hz)** bounded to `[45.0, 50.5] Hz`.
-2. **Calibrated Security Probability (`P(f_nadir >= 49.50 Hz)`)** and binary security status (`1 = Secure`, `0 = Insecure`) with 95% epistemic confidence bounds.
+An end-to-end simulation, synchrophasor emulation, strictly causal feature engineering, probability-calibrated machine learning, and statistical benchmarking framework (`pmu_fsa`) for early post-disturbance frequency-security assessment on the **IEEE 39-bus, 10-machine** multi-area power system standardized at **50.0 Hz** (`f_secure = 49.50 Hz`).
 
 ---
 
-## Why This Matters
+## 1. Research Objective
 
-When a large generator trips offline, active power demand exceeds mechanical supply and synchronous rotors decelerate. As converter-interfaced solar and wind plants (`10%–50%` penetration) displace conventional synchronous turbines, effective system inertia `H` drops—producing steeper initial Rate of Change of Frequency (ROCOF) and deeper frequency drops before turbine governors (`TGOV1`) can respond.
+Following a sudden generator outage in a low-inertia power grid, system frequency decays rapidly before turbine governors can arrest the excursion. Full numerical time-domain simulation of nonlinear swing and governor differential equations (`125.38 ms` median per `10 s` contingency) creates a computational bottleneck when screening hundreds of candidate contingencies online, whereas post-mortem machine learning classifiers trained on full trajectories provide zero early-warning lead time.
 
-- **Numerical ODE simulation is too slow for large-scale online screening** (~`350 ms` per contingency).
-- **Full-window ML classifiers leak post-nadir samples**, offering no operational lead time.
-- **Uncalibrated classifiers distort borderline probabilities** near `49.50 Hz` and degrade sharply if raw two-point finite differences amplify PMU sensor noise.
-
-By combining noise-resilient Ordinary Least Squares (OLS) ROCOF estimation, multi-area spatial features, and a two-stage **Calibrated Gradient Boosted Decision Tree (`CalibratedGBDTClassifier`)**, online assessment completes in **`0.485 ms`** per scenario (**721.6x speedup** over dynamic simulation) while preserving **`5.06 s–6.56 s`** of early-warning lead time.
+The primary objective of this study is to quantify **how early after a generation-loss disturbance (`T_obs in {0.5, 1.0, 1.5, 2.0} s` following fault inception at `t_0 = 1.0 s`) strictly causal wide-area PMU measurements suffice to**:
+1. **Predict the continuous future Center-of-Inertia (COI) frequency nadir (`f_nadir` in Hz)** within physical bounds `[45.0, 50.5] Hz` before the nadir physically occurs (`t_nadir in [2.78, 3.70] s`).
+2. **Deliver calibrated probability estimates `P(f_nadir >= 49.50 Hz)` and safety-asymmetric binary security decisions** (`1 = Secure`, `0 = Insecure`) with quantified epistemic/aleatoric prediction intervals across unseen high-renewable (`40%–50%`), unseen load (`0.80x`, `1.20x`), noisy PMU (`0–50 mHz`), sparse `13/39`-bus PMU (`33.3%`), and `25 fps` reporting regimes.
 
 ---
 
-## Repository Layout
+## 2. Scope & Assumptions
 
-```text
-btp-early-pmu-fsa/
-├── pyproject.toml                  # Package metadata & dependencies
-├── requirements.txt                # Pip dependency list
-├── setup.py                        # Editable install shim
-├── BTP_Complete_Project_Guide.pdf  # 12-page visual explanation & viva guide (50.0 Hz)
-├── src/pmu_fsa/
-│   ├── simulation/
-│   │   ├── ieee39_data.py          # 39 buses, 10 generators, 46 branches, 3-area map (50.0 Hz)
-│   │   ├── renewables.py           # Converter-interfaced generation & inertia derating
-│   │   ├── dynamic_engine.py       # Kron reduction + 30 coupled swing & TGOV1 governor ODEs
-│   │   ├── pmu_recorder.py         # 50 fps IEEE C37.118.2 sampler, FIR ROCOF, binary CRC frames
-│   │   └── scenario_generator.py   # Combinatorial outage generator & deterministic ID/OOD split
-│   ├── features/
-│   │   ├── window_slicer.py        # Strict [t0, t0 + T_obs] causal windowing
-│   │   └── extractor.py            # 14 temporal, energy, and multi-area spatial PMU features
-│   ├── models/
-│   │   ├── regressors.py           # Ridge, Decision Tree, Random Forest, GBDT nadir regressors
-│   │   ├── classifiers.py          # Logistic, Decision Tree, Random Forest, GBDT classifiers
-│   │   ├── calibrated_gb.py        # Two-stage GBDT + L-BFGS Platt / PAVA Isotonic calibration
-│   │   └── calibration_metrics.py  # Brier score, ECE, MCE, and reliability diagram binning
-│   ├── evaluation/
-│   │   ├── sensitivity.py          # Observation window sweep (0.5 s - 2.0 s) & lead-time tracking
-│   │   ├── ood_generalization.py   # Domain shift: train 10-30% RES -> test 40-50% RES
-│   │   ├── noise_stress.py         # IEEE C37.118 Gaussian PMU noise sweep (0 - 50 mHz)
-│   │   └── latency.py              # Hardware perf_counter_ns timing vs. ODE simulation
-│   └── pipeline/
-│       └── run_experiments.py      # Single-command end-to-end experiment runner
-├── scripts/
-│   ├── run_simulations.py          # CLI 1: Simulate contingency trajectories -> data/raw/*.npz
-│   ├── extract_features.py         # CLI 2: Extract windowed features -> data/processed/*.npz/.csv
-│   ├── train_models.py             # CLI 3: Fit models & export regression/classification tables
-│   └── evaluate_all.py             # CLI 4: Run robustness & latency benchmarks -> results/
-├── data/
-│   ├── raw/                        # Simulated .npz PMU trajectory archives (450 scenarios)
-│   └── processed/                  # Tabular feature matrices (.npz and .csv for 0.5s - 2.0s)
-├── models/                         # Saved .joblib estimators & training_metrics.json
-├── results/
-│   ├── evaluation_report.md        # Consolidated benchmark report
-│   └── tables/                     # CSV & Markdown tables for all experiments
-└── tests/                          # 454 unit, causality, boundary, and end-to-end tests
-```
+### Investigated Within Scope
+- Post-contingency primary frequency response following complete and partial synchronous generation outages (`80.0 MW` to `1,200.0 MW`) across all 10 generator buses (`30–39`).
+- Synthetic IEEE C37.118-style time-synchronized bus frequency, voltage magnitude, voltage phase angle, and causal ROCOF streams at `50 fps` (primary) and `25 fps` (sensitivity).
+- Strictly causal pre-nadir observation windows (`[t_0, t_0 + T_obs]`) with zero access to internal simulator rotor speeds or post-window samples.
+- Cross-regime generalization across disjoint scenario-level splits (`train`, `val`, `test`, and three out-of-distribution shifts: `ood_res`, `ood_load`, `ood_combined`).
+- Post-hoc probability calibration (Platt scaling vs. Pool Adjacent Violators Algorithm [PAVA] isotonic regression), asymmetric false-secure error control (`FNR_insecure`), permutation interpretability, and hardware-timed CPU inference latency.
+
+### Outside Initial Scope & Modelling Assumptions
+- No closed-loop emergency control actuation (e.g., automated Under-Frequency Load Shedding [UFLS] relay tripping, fast frequency response [FFR] dispatch, or reinforcement learning control).
+- No cyber-physical packet-injection, spoofing, or denial-of-service attack modelling.
+- Classical third-order generator + first-order steam-reheat governor (`TGOV1`-equivalent) electro-mechanical dynamics with constant-impedance Kron-reduced passive loads rather than electromagnetic transient (`EMT`) converter-control loops or utility hardware-in-the-loop (`HIL`) recordings.
 
 ---
 
-## Installation & Setup
+## 3. IEEE 39-Bus 50 Hz System Model
 
-Requires **Python 3.9+** on macOS or Linux.
+The benchmark network (`src/pmu_fsa/simulation/ieee39_data.py`, `dynamic_engine.py`) adapts the canonical IEEE 39-bus (New England) 10-machine, 46-branch multi-area test system to a **50.0 Hz** nominal frequency base (`S_base = 100.0 MVA`, `omega_0 = 2 * pi * 50.0 = 314.159 rad/s`, `f_secure = 49.50 Hz` corresponding to the `-0.50 Hz` emergency floor prior to UFLS Stage-1):
 
+- **Three Coherent Operating Areas & Primary Tie-Lines**:
+  - **Area 1 (South, 9 buses)**: Buses `[1, 2, 3, 4, 18, 25, 30, 31, 32]` hosting `G1–G3` (Buses `30–32`).
+  - **Area 2 (Central, 15 buses)**: Buses `[5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 33, 34, 35, 36]` hosting `G4–G7` (Buses `33–36`).
+  - **Area 3 (North, 15 buses)**: Buses `[9, 17, 19, 20, 21, 22, 23, 24, 26, 27, 28, 29, 37, 38, 39]` hosting `G8–G10` (Buses `37–39`).
+  - **Primary Inter-Area Tie-Lines**: Branches `(4, 5)` (`Area 1 <-> Area 2`), `(1, 39)` (`Area 1 <-> Area 3`), and `(16, 17)` (`Area 2 <-> Area 3`).
+- **Regional Islanded Bus-39 Equivalent (`macro_intertie = False` Default)**: Bus 39 (`G10`, `1,000 MW`, `1,200 MVA`) is modelled by default as a regional thermal plant (`H_39 = 42.0 s`, `X'_d = 0.0400 pu`), yielding total pre-fault synchronous inertia `H_tot = 324.7 s` on the `100 MVA` base so single-plant outages produce realistic regional frequency nadirs (`48.26–49.91 Hz`). An opt-in `--macro-intertie` flag restores the stiff external intertie equivalent (`H_39 = 500.0 s`, `X'_d = 0.0060 pu`, `H_tot = 782.7 s`).
+- **Pre-Fault Newton-Raphson AC Power Flow**: For each load scaling factor (`0.80x–1.20x` of nominal `6,150.1 MW` / `1,408.9 MVAR` across 19 PQ load buses), `solve_power_flow()` converges in 4–5 iterations to `< 1e-11 pu` power mismatch, initializing internal generator electromotive forces `E'_i` and mechanical power `P_m0,i` with `< 1e-8 MW` pre-disturbance imbalance (`0.0000 Hz` flat-run drift).
+- **Machine-Base 5% Droop & Coupled Swing/Governor ODEs**: Each unit `i in {1..10}` carries explicit MVA rating `S_mva,i in [350, 1200] MVA` and `5%` speed-droop `R_i = 0.05` on its own machine rating, converted to the `100 MVA` system base via `R_sys,i = R_i * (100.0 / S_mva,i)` with effective steam-reheat prime-mover time constant `T_g,i = 4.20 s` and damping `D_i = 2.0 pu`:
+  - `d(delta_i)/dt = omega_0 * Delta_omega_i`
+  - `2 * H_i * d(Delta_omega_i)/dt = P_m,i - P_e,i(delta) - D_i * Delta_omega_i`
+  - `T_g,i * d(P_m,i)/dt = P_m0,i - (Delta_omega_i / R_sys,i) - P_m,i`
+
+---
+
+## 4. Generation-Loss Representation
+
+Disturbances are applied at `t_0 = 1.0 s` over a `10.0 s` horizon using two-segment adaptive `RK45` integration (`[0, t_0]` with pre-fault Kron matrices `(Y_red,pre, K_pre)` and `[t_0, 10.0 s]` with post-fault `(Y_red,post, K_post)`):
+
+1. **Complete Generator Disconnection (`loss_fraction = 1.0`)**: Removes the tripped unit's Norton shunt admittance `y_g[j] = 1 / (j * X'_d,j)` from the post-fault network admittance matrix `Y_NN`, zeros row/column `j` of `Y_red,post` and column `j` of bus voltage reconstruction operator `K_post`, enforces `P_e,post[j] = P_m,post[j] = Delta_omega_post[j] = 0`, and excludes unit `j` from post-fault COI inertia weighting `H_post`.
+2. **Partial Multi-Unit Plant Loss (`0 < loss_fraction < 1`, specifically `0.70` and `0.40`)**: Represents tripping a subset of parallel generating units at a multi-unit power station by scaling `y_g,post[j]`, `H_post[j]`, `D_post[j]`, `P_m0,post[j]`, inverse droop gain `R_sys,post^-1[j]`, and initial turbine output `P_m(t_0^+)[j]` proportionally by `1 - loss_fraction`.
+
+Ground-truth target `ground_truth_nadir` (`f_nadir`) and `ground_truth_t_nadir` (`t_nadir`) are defined strictly on the post-fault **system Center-of-Inertia (COI) frequency** `f_COI(t) = 50.0 * (1 + sum_{i in online} H_post,i * Delta_omega_i(t) / sum_{i in online} H_post,i)`, while `bus_min_nadir` and `nadir_bus_id` are archived in metadata for diagnostic comparison.
+
+---
+
+## 5. Renewable Integration Model
+
+Converter-interfaced solar/wind generation (`src/pmu_fsa/simulation/renewables.py`) displaces synchronous capacity across all 9 non-slack generator buses (`DEFAULT_DISPLACED_BUSES = [30, 32, 33, 34, 35, 36, 37, 38, 39]`, totaling `5,620.0 MW` nominal dispatch; Slack Bus 31 excluded):
+
+- **Requested vs. Realized Penetration**: For requested load-referenced penetration `p_ren_requested in {0.10, 0.20, 0.30, 0.40, 0.50}`, required converter dispatch is `P_ren = p_ren_requested * load_scale * P_load,base`, yielding uniform synchronous displacement factor `alpha = P_ren / P_target,scaled`. Because total generation (`6,192.8 MW` nominal, including transmission losses) slightly exceeds PQ load (`6,150.1 MW`), generation-referenced `p_ren_realized = [0.09931, 0.19862, 0.29793, 0.39724, 0.49655]` (`9.93%–49.66%`), scaling strictly linearly with zero saturation plateau.
+- **Constant-PQ Grid-Following (GFL) Inertia Derating**: Under the default GFL converter assumption (`h_vir = 0.0 s`, `enable_droop = False`), displaced synchronous capacity contributes zero rotational inertia and zero primary droop, reducing effective synchronous inertia per displaced bus to `H_eff,i = (1 - alpha) * H_orig,i` (from `H_tot = 294.7 s` at `10%` RES down to `174.6 s` at `50%` RES before outage). Optional synthetic fast converter droop (`enable_droop = True`, `r_ren`, `t_inv`) is supported for grid-forming sensitivity studies.
+
+---
+
+## 6. PMU Measurement Model
+
+`PMURecorder` (`src/pmu_fsa/simulation/pmu_recorder.py`) converts continuous bus trajectories into realistic synchrophasor streams without leaking internal generator states:
+
+- **Reporting Rates & Wrap-Safe Interpolation**: Supports IEEE Std C37.118.1-2011 reporting rates including **`50 fps`** (`Delta t = 20 ms`, primary 50-Hz standard) and **`25 fps`** (`Delta t = 40 ms`, sensitivity case). Bus phase angles are unwrapped in radians prior to linear interpolation onto uniform `SOC`/`FRACSEC` timestamps and re-wrapped to `[-180, 180) deg`.
+- **PMU-Only Wide-Area Frequency Reconstruction (`f_sys_pmu`)**: Reconstructs wide-area system frequency strictly from observed PMU `bus_frequencies` using area-weighted observed bus means `(9 * mean(Area_1) + 15 * mean(Area_2) + 15 * mean(Area_3)) / 39`, with zero access to internal rotor speeds `coi_frequency` or `H_eff`.
+- **Strictly Causal 5-Point Backward OLS ROCOF**: Estimates bus and system ROCOF (`df/dt`) causally via closed-form backward Ordinary Least Squares slope over `[max(0, n-4) .. n]` (`0` at `n=0`, 2-pt backward difference at `n=1`, 3/4-pt causal OLS warmup at `n=2,3`, and `0.1 * fps * (2*(f[n]-f[n-4]) + f[n-1] - f[n-3])` for `n >= 4`). Compared against naive 2-point finite differences at `5 mHz` noise, causal OLS reduces ROCOF error variance by a factor of `0.0003` (`var_ols = 0.001616` vs. `var_2pt = 4.642054`).
+- **Per-Scenario Seeded Measurement Noise**: Injects independent zero-mean Gaussian noise across `bus_frequencies` (`sigma_f`, default `5 mHz`), `voltage_magnitudes` (`sigma_v = 0.0005 pu`), and `voltage_angles` (`sigma_theta_deg = 0.05 deg`) seeded deterministically via `seed + MD5_offset(scenario_id)`, then recomputes causal 5-point ROCOF and `f_sys_pmu`.
+- **Simplified Single-Station IEEE C37.118.2 Framing & Partial Observability**: Implements binary frame serialization/parsing (`SYNC = 0xAA01`, `FRAMESIZE`, `IDCODE`, `SOC`, `FRACSEC`, `STAT`, phasor, `FREQ`, `DFREQ`, `CRC-CCITT 0x1021`) and supports partial spatial PMU coverage (canonical 13-bus placement `[1, 2, 4, 5, 6, 9, 14, 16, 17, 19, 22, 25, 39]`, `33.3%` of buses) via `NaN` column masking.
+
+---
+
+## 7. Canonical 14-Feature Definitions & Units
+
+`FeatureExtractor` (`src/pmu_fsa/features/extractor.py`) slices each PMU stream strictly on `W = [t_0, t_0 + T_obs]` via `extract_causal_window()` (stripping all forbidden internal simulator keys) and computes **14 canonical spatiotemporal synchrophasor features** (`CANONICAL_FEATURE_NAMES`):
+
+| # | Canonical Feature Name | Formula on Causal Window `W = [t_0, t_0 + T_obs]` | Units | Physical Interpretation |
+|---:|---|---|---|---|
+| 1 | `rocof_init` | `OLS_slope(t, f_sys_pmu)` over `[t_0, min(t_0 + 0.10, t_end)]` | `Hz/s` | Initial post-fault ROCOF (`~ -Delta P * f_0 / (2 H_eff)`) |
+| 2 | `rocof_peak_neg` | `min_{t in W} rocof_sys_pmu(t)` | `Hz/s` | Steepest downward causal 5-point wide-area ROCOF |
+| 3 | `rocof_end` | `rocof_sys_pmu(t_0 + T_obs)` | `Hz/s` | Instantaneous wide-area ROCOF at decision time `t_0 + T_obs` |
+| 4 | `rocof_mean` | `OLS_slope(t, f_sys_pmu)` over `[t_0, t_0 + T_obs]` | `Hz/s` | Noise-resilient window-wide average frequency decay slope |
+| 5 | `freq_drop_end` | `f_sys_pmu(t_0 + T_obs) - f_sys_pmu(t_0)` | `Hz` | Net wide-area frequency excursion at observation boundary |
+| 6 | `freq_drop_max` | `min_{t in W} f_sys_pmu(t) - f_0` | `Hz` | Worst wide-area frequency drop below `50.0 Hz` within `W` |
+| 7 | `freq_dev_integral` | `integral_{t_0}^{t_0 + T_obs} (f_sys_pmu(t) - f_0) dt` | `Hz*s` | Cumulative rotor kinetic-energy deficit driving governor droop |
+| 8 | `bus_drop_worst` | `nanmin_{t in W, b in B_obs} (f_bus(t, b) - f_0)` | `Hz` | Worst localized substation frequency drop across observed buses |
+| 9 | `area_freq_spread_max` | `max_{t in W} max_{a,b in {1,2,3}} |mean_A_a(t) - mean_A_b(t)|` | `Hz` | Peak inter-area frequency separation across Areas 1, 2, and 3 |
+| 10 | `bus_freq_std_mean` | `mean_{t in W} nanstd_{b in B_obs} f_bus(t, b)` | `Hz` | Window-mean spatial dispersion of observed bus frequencies |
+| 11 | `angle_divergence_max` | `max_{t in W} max_{a,b in B_obs} |wrap_180(Delta theta_a(t) - Delta theta_b(t))|` | `deg` | Peak network-wide relative bus voltage phase-angle stress |
+| 12 | `tie_line_angle_excursion` | `max_{t in W} max_{(a,b) in {(4,5),(1,39),(16,17)}} |wrap_180(Delta theta_ab(t))|` | `deg` | Peak synchronizing phase-angle swing across primary tie-lines |
+| 13 | `freq_curvature_init` | `OLS_slope(t, rocof_sys_pmu)` over `[t_0, min(t_0 + 0.20, t_end)]` | `Hz/s^2` | Initial second-derivative frequency curvature `d^2f/dt^2` |
+| 14 | `freq_curvature_mean` | `OLS_slope(t, rocof_sys_pmu)` over `[t_0, t_0 + T_obs]` | `Hz/s^2` | Window-wide arrest curvature `d^2f/dt^2` (governor valve ramp) |
+
+---
+
+## 8. 750-Scenario Dataset Generation & Separation (`raw_sim` vs `raw`)
+
+The full combinatorial dataset (`configs/default_50hz.yaml`) spans **750 unique contingencies**:
+- `10` generator buses (`30–39`) × `3` outage loss fractions (`1.0, 0.70, 0.40`) × `5` renewable penetrations (`0.10, 0.20, 0.30, 0.40, 0.50`) × `5` PQ load scales (`0.80, 0.90, 1.00, 1.10, 1.20`) = **750 scenarios** (`303` Secure [`40.4%`], `447` Insecure [`59.6%`]; COI nadir `[48.2556, 49.9109] Hz`, `t_nadir in [2.78, 3.70] s`).
+- **Strict Simulator vs. PMU File Separation**:
+  - `data/raw_sim/*.npz` (`750` files): Archives internal ODE trajectories (`generator_angles`, `generator_speeds`, `generator_powers`, `coi_frequency`, `coi_rocof`) exclusively for physics diagnostics and ground-truth verification.
+  - `data/raw/*.npz` (`750` files): Contains **only** observable PMU channels (`timestamps`, `soc`, `fracsec`, `bus_frequencies`, `bus_rocof`, `voltage_magnitudes`, `voltage_angles`, `pmu_sys_frequency`) plus scenario provenance metadata. Zero internal ODE states exist in `data/raw/`.
+- **Automated 14-Check Quality & Pre-Nadir Causality Audit (`results/dataset_quality_report.md`)**: Verifies `0` duplicate IDs, `0` missing files, `0` channel leaks, exact `1/fps` sampling, COI label consistency, and pre-nadir causality (`750/750 = 100.00%` strictly causal at `T_obs in {0.5, 1.0, 1.5} s`; `742/750 = 98.93%` at `T_obs = 2.0 s`, with the `8` heavy-load scenarios reaching `t_nadir <= 3.00 s` explicitly logged and excluded in `features_t2.0s.{npz,csv}`).
+
+---
+
+## 9. Disjoint `train` / `val` / `test` / `ood_test` Partitioning
+
+Scenario partitioning (`assign_scenario_partition` in `scenario_generator.py`) is assigned ** strictly at the scenario level** via deterministic MD5 hashing of `scenario_id` (`scen_gen{bus}_loss{MW}_ren{pct}_ld{pct}_000`), guaranteeing zero scenario overlap across splits and identical partition membership across all observation windows `T_obs`:
+
+| Partition | Regime (`ood_type`) | Operating Domain Definition | Scenarios (`N`) | Share | Secure (`>=49.50 Hz`) | Insecure (`<49.50 Hz`) | Mean / Min COI Nadir (Hz) |
+|---|---|---|---:|---:|---:|---:|---|
+| `train` | `id` | `RES in {10, 20, 30}%`, `Load in {0.90, 1.00, 1.10}x` | 148 | 19.73% | 71 (48.0%) | 77 (52.0%) | `49.4612` / `48.7188` |
+| `val` | `id` | `RES in {10, 20, 30}%`, `Load in {0.90, 1.00, 1.10}x` | 70 | 9.33% | 34 (48.6%) | 36 (51.4%) | `49.4395` / `48.7358` |
+| `test` | `id` | Held-Out ID (`RES in {10..30}%`, `Load in {0.90..1.10}x`) | 52 | 6.93% | 21 (40.4%) | 31 (59.6%) | `49.4271` / `48.8165` |
+| `ood_test` | `ood_res` | Unseen High RES (`40–50%`), Seen Load (`0.90–1.10x`) | 180 | 24.00% | 49 (27.2%) | 131 (72.8%) | `49.2054` / `48.2689` |
+| `ood_test` | `ood_load` | Seen RES (`10–30%`), Unseen Extreme Load (`{0.80, 1.20}x`) | 180 | 24.00% | 95 (52.8%) | 85 (47.2%) | `49.4874` / `48.7342` |
+| `ood_test` | `ood_combined` | Simultaneous High RES (`40–50%`) + Extreme Load (`{0.80, 1.20}x`) | 120 | 16.00% | 33 (27.5%) | 87 (72.5%) | `49.2595` / `48.2556` |
+| **Total** | **All** | **Full Combinatorial Grid** | **750** | **100.00%** | **303 (40.4%)** | **447 (59.6%)** | **`49.3694` / `48.2556`** |
+
+---
+
+## 10. Regression Methodology (7 Models)
+
+Seven continuous nadir regressors (`src/pmu_fsa/models/regressors.py`) are trained under identical causal feature inputs, with predictions bounded to physical grid limits `[45.0, 50.5] Hz`:
+1. **`MeanNadirRegressor`**: Constant training-mean baseline (`R^2 ~ 0` reference).
+2. **`AnalyticalSwingNadirRegressor`**: Physics-informed baseline fitting an L2-regularized (`alpha = 0.01`) linear-quadratic + parabolic swing-vertex basis (`-rocof_init^2 / (2 * max(|freq_curvature_mean|, eps))`) on `[rocof_init, freq_drop_end, freq_curvature_mean]`.
+3. **`LinearNadirRegressor` (Ridge)**: `StandardScaler` (fit strictly on training data) + Ridge regression (`alpha = 0.1`).
+4. **`DecisionTreeNadirRegressor` (CART)**: Single recursive regression tree (`max_depth = 5`).
+5. **`RandomForestNadirRegressor`**: Bagged ensemble (`n_estimators = 100`, `max_depth = 10`).
+6. **`GradientBoostingNadirRegressor` (GBDT)**: Stagewise gradient-boosted regression trees (`n_estimators = 100`, `learning_rate = 0.08`, `max_depth = 4`).
+7. **`LightGBMNadirRegressor`**: Histogram-based gradient boosting (`n_estimators = 100`, `learning_rate = 0.08`, `num_leaves = 15`; gracefully falls back to scikit-learn `HistGradientBoostingRegressor` with recorded `backend_ = "sklearn_hist_gbdt"` when `libomp.dylib` is absent on macOS).
+
+Model selection is performed strictly on `val` (`N = 70` after fitting on `train`, `N = 148`); final saved estimators (`models/*.joblib`) use equalized `train + val` refitting (`N = 218`) with zero access to `test` (`N = 52`) or `ood_test` (`N = 480`).
+
+---
+
+## 11. Classification & Safety Methodology
+
+Seven security classifiers (`src/pmu_fsa/models/classifiers.py`, `calibrated_gb.py`) predict binary status `y_sec = 1[f_nadir >= 49.50 Hz]`: Logistic Regression, Decision Tree, Random Forest, Uncalibrated GBDT, LightGBM Classifier, and the two proposed **Physics-Guided Calibrated GBDT** variants (`Platt` and `PAVA Isotonic`).
+
+Because misclassifying an actual under-frequency emergency (`f_nadir < 49.50 Hz`, class `0`) as `"Secure"` (class `1`) leaves the grid unshielded against UFLS tripping, evaluation explicitly tracks **Missed-Insecure False-Negative Rate** alongside standard Precision, Recall, `F1`, `PR-AUC`, and `ROC-AUC`:
+- **`FNR_insecure = FP_secure / (TN_insecure + FP_secure)`**: Fraction of truly insecure contingencies falsely cleared as secure (`Missed_Insecure` count).
+- **`FPR_secure = FN_secure / (TP_secure + FN_secure)`**: Fraction of truly secure contingencies conservatively flagged as insecure (benign false alarms).
+- **Decision-Threshold Sweep**: Sweeps probability cutoffs `tau in {0.30, 0.50, 0.60, 0.70, 0.80, 0.90}` (`y_hat = 1[P(Secure) >= tau]`) to identify conservative operating thresholds where `FNR_insecure -> 0.0000`.
+
+---
+
+## 12. Calibration Methodology
+
+`CalibratedGBDTClassifier` (`src/pmu_fsa/models/calibrated_gb.py`) decouples continuous physical margin estimation from probability calibration:
+1. **Stage 1 (Continuous Physical Score)**: Base `GradientBoostingRegressor` predicts `s(x) = f_hat_nadir(x)` in Hz, preserving exact physical distance from `49.50 Hz` (`49.49 Hz` vs. `48.26 Hz`).
+2. **Stage 2 (Out-of-Fold Calibration)**: Using 5-fold stratified cross-fitting across `train + val` (`N_cal = 218`, zero `test` leakage), out-of-fold continuous nadir predictions `s_oof` are mapped to `[0, 1]` via:
+   - **Platt Scaling (`calibrated_gb_platt`)**: L-BFGS logistic sigmoid `P(Secure | s) = 1 / (1 + exp(-(A * s + B)))` with physics monotonicity guardrail `A > 0` (learned `A = 71.8078`, `B = -3554.1001`, centered at `-B/A = 49.4947 Hz`).
+   - **PAVA Isotonic Regression (`calibrated_gb_iso`)**: Non-parametric monotonic step-linear interpolation (`216` knots fitted natively with `fallback_used = False`; includes automatic fallback to Platt scaling only when `N_cal < 30`).
+3. **Stage 3 (Quantile + Conformal + OOD Distance Intervals)**: Pairs auxiliary `alpha = 0.025` and `alpha = 0.975` quantile GBDT regressors with out-of-fold conformal residual floor (`q_95`) and standardized feature-space Mahalanobis/RMS distance inflation, widening prediction intervals automatically under `40%–50%` OOD domain shift.
+
+---
+
+## 13. Evaluation & Statistical Methodology
+
+All evaluation modules (`src/pmu_fsa/evaluation/`) report **raw, unsmoothed, unclamped** empirical metrics strictly on held-out partitions:
+- **Paired Non-Parametric Statistical Testing (`statistical_tests.py`)**: Computes `1,000`-resample scenario-paired bootstrap 95% confidence intervals and two-sided Wilcoxon signed-rank + paired bootstrap `p`-values comparing GBDT / Calibrated GBDT against all baselines.
+- **Multi-Seed & Sample-Complexity Audits**: Evaluates variance across 5 random seeds (`42–46`) and training-set fractions `[20%, 40%, 60%, 80%, 100%]` (`N = 30..148`).
+- **6-Stage Hardware Latency Profiling (`latency.py`)**: Uses `time.perf_counter_ns()` (`10` warmup + `100` timed repetitions) across all 5 online stages + total end-to-end execution, benchmarked directly against hardware-measured `10 s` `DynamicSimulator` runs on the same CPU.
+
+---
+
+## 14. Verified Experimental Results Summary
+
+All numbers below match `results/tables/*.md`, `results/evaluation_report.md`, and `models/training_metrics.json` on the verified 750-scenario 50.0 Hz run (`T_obs = 1.0 s` unless noted):
+
+### 14.1 Continuous Nadir Regression (Held-Out ID `test`, `N = 52`, `T_obs = 1.0 s`)
+
+| Model | Val MAE (Hz) | Test MAE (Hz) | Test RMSE (Hz) | P95 \|e\| (Hz) | `R^2` | 95% Bootstrap CI (Hz) | Inference (ms) |
+|---|---:|---:|---:|---:|---:|---|---:|
+| Constant Mean Baseline | 0.2319 | 0.2104 | 0.2526 | 0.4053 | -0.0117 | `[0.1759, 0.2517]` | 0.0008 |
+| Analytical Swing Baseline | 0.0035 | 0.0042 | 0.0056 | 0.0125 | 0.9995 | `[0.0032, 0.0052]` | 0.0127 |
+| **Ridge Linear Regression** | **0.0034** | **0.0034** | **0.0046** | **0.0095** | **0.9997** | `[0.0026, 0.0043]` | 0.0111 |
+| Decision Tree (CART) | 0.0151 | 0.0111 | 0.0148 | 0.0270 | 0.9965 | `[0.0087, 0.0137]` | 0.0086 |
+| Random Forest (100 Trees) | 0.0112 | 0.0090 | 0.0140 | 0.0274 | 0.9969 | `[0.0064, 0.0122]` | 0.2905 |
+| **Gradient Boosting (GBDT)** | 0.0106 | **0.0077** | **0.0113** | **0.0179** | **0.9980** | `[0.0058, 0.0101]` | 0.0182 |
+| LightGBM (`sklearn_hist_gbdt`) | 0.0148 | 0.0086 | 0.0116 | 0.0232 | 0.9979 | `[0.0067, 0.0107]` | 0.0423 |
+
+*(Note: Because classical 3rd-order swing + linear droop trajectories vary smoothly across the bounded ID domain, global L2 linear and analytical quadratic models avoid tree-leaf quantization steps [`3.4–4.2 mHz` vs. `7.7 mHz` GBDT MAE], while `CalibratedGBDTClassifier` achieves the lowest validation Brier score [`0.0056`] and provides non-parametric quantile/OOD uncertainty intervals.)*
+
+### 14.2 Security Classification, Calibration & Safety Sweep (Held-Out ID `test`, `N = 52`)
+
+| Classifier Model | Val Brier | Test F1 | PR-AUC | ROC-AUC | Test Brier | Test ECE | `FNR_insecure` (`tau=0.50`) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Logistic Regression | 0.0123 | **1.0000** | 1.0000 | 1.0000 | 0.0132 | 0.0501 | **0.0000** (`0/31`) |
+| Decision Tree | 0.0143 | 0.9767 | 0.9773 | 0.9839 | 0.0192 | 0.0192 | 0.0323 (`1/31`) |
+| Random Forest | 0.0091 | 0.9767 | 1.0000 | 1.0000 | 0.0093 | 0.0223 | 0.0323 (`1/31`) |
+| Uncalibrated GBDT | 0.0143 | 0.9767 | 0.9773 | 0.9839 | 0.0192 | 0.0193 | 0.0323 (`1/31`) |
+| LightGBM Classifier | 0.0143 | 0.9767 | 0.9989 | 0.9992 | 0.0181 | **0.0179** | 0.0323 (`1/31`) |
+| **Proposed Calibrated GBDT (Platt)** | **0.0056** | 0.9767 | **1.0000** | **1.0000** | 0.0141 | 0.0267 | 0.0323 (`0.0000` at `tau=0.70`) |
+| **Proposed Calibrated GBDT (Isotonic)** | 0.0063 | 0.9767 | **1.0000** | **1.0000** | **0.0080** | 0.0192 | 0.0323 (`0.0000` at `tau=0.70`) |
+
+- **Safety Threshold Sweep**: Raising the decision threshold from `tau = 0.50` to conservative **`tau = 0.70`** eliminates all missed insecure emergencies (`FNR_insecure = 0.0000`, `0/31` missed, `TN=31, TP=20, FP=0, FN=1`) with `FPR_secure = 0.0476` and `F1 = 0.9756`.
+
+### 14.3 Observation Window Sensitivity, OOD Generalization, Noise, Observability & Latency
+- **Window Trade-off (`T_obs in {0.5, 1.0, 1.5, 2.0} s`)**:
+  - Held-Out ID `test` (`N=52`): MAE improves from `0.0124 Hz` (`0.5 s`, mean `t_lead = 1.7942 s`) -> **`0.0077 Hz`** (`1.0 s`, `t_lead = 1.2942 s`) -> **`0.0069 Hz`** (`1.5 s`, `t_lead = 0.7942 s`, `F1 = 1.0000`) -> `0.0074 Hz` (`2.0 s`, `t_lead = 0.2942 s`).
+  - Held-Out `ood_test` (`N=480`): MAE improves from `0.0279 Hz` (`0.5 s`) -> **`0.0184 Hz`** (`1.0 s`, `F1 = 0.9860`, `ECE = 0.0224`) -> `0.0218 Hz` (`1.5 s`, `F1 = 0.9943`, `FNR_insecure = 0.0000`).
+- **OOD Domain Shift (`T_obs = 1.0 s`)**:
+  - `OOD-Load` (`0.80x, 1.20x`, `N=180`): `MAE = 0.0078 Hz`, `F1 = 0.9792`, `ECE = 0.0263`.
+  - `OOD-RES` (`40–50%` RES, `N=180`): `MAE = 0.0267 Hz`, `F1 = 1.0000`, `FNR_insecure = 0.0000`, `ECE = 0.0216`; 95% prediction interval widens from `0.6616 Hz` (ID) to **`0.7428 Hz`** (`+12.3%`) due to unseen low-inertia nadir tail extrapolation (`48.26 Hz` vs. `48.72 Hz` training floor).
+  - `OOD-Combined` (`N=120`): `MAE = 0.0217 Hz`, `F1 = 0.9851`, `ECE = 0.0250`. Pooled `OOD-All` (`N=480`): `MAE = 0.0184 Hz` (`+0.0107 Hz` shift gap), `F1 = 0.9860`, `Brier = 0.0086`, `ECE = 0.0224`.
+- **PMU Gaussian Noise (`sigma_f in {0, 5, 10, 20, 50} mHz`)**: Held-out ID `MAE` rises gradually `0.0077 -> 0.0082 -> 0.0085 -> 0.0101 -> 0.0114 Hz` while `F1 = 0.9767` remains invariant across all noise levels (`prob_stability_mad <= 0.0131`).
+- **Partial PMU & 25-fps Ablations (`train`-only `N=148` baseline `ID MAE = 0.0093 Hz`)**:
+  - **13/39 Sparse PMU (`33.3%` bus coverage)**: `ID MAE = 0.0108 Hz`, `ID F1 = 1.0000` (`FNR_insecure = 0.0000`), `OOD MAE = 0.0238 Hz`, `OOD F1 = 0.9858`.
+  - **25 fps Reporting Rate**: `ID MAE = 0.0094 Hz` (`+0.0001 Hz` vs. `50 fps`), `ID F1 = 0.9767`, `OOD MAE = 0.0239 Hz`.
+- **6-Stage Real Hardware Latency (`Intel Core i7-9750H`, 100 reps)**: `0.1420 ms` slicing + `0.8208 ms` 14-feature extraction + `0.7493 ms` regression + `0.6353 ms` classification + `0.0293 ms` calibration = **`2.3805 ms` median total** (`2.9045 ms` P95, `3.3641 ms` P99) vs. **`125.3759 ms`** hardware-measured `10 s` ODE simulation (**`52.7x` speedup**).
+
+---
+
+## 15. Completed Functionality, Limitations & Future Work
+
+### Completed & Verified Functionality
+- Full 50.0 Hz Newton-Raphson power-flow-initialized IEEE 39-bus simulator (`H_39 = 42.0 s`), complete/partial generator disconnection physics, linear 9-bus RES displacement, causal 5-point OLS PMU recorder, 14-feature causal extractor, 7 regressors, 7 classifiers, cross-fit Platt & PAVA Isotonic calibration with quantile/conformal intervals, 26 CSV/Markdown benchmark tables, 13 publication PNG/PDF figures, and **232 automated production tests passing (`83` unit/integration + `149` E2E; `0` shadow mocks)**.
+
+### Explicit Technical Limitations
+1. **No Operational Relay Certification**: This codebase is a research screening prototype and is **not** certified for direct protective relay tripping without utility EMS/SCADA and HIL qualification.
+2. **Classical 3rd-Order ODE & Constant-Admittance Load Fidelity**: Synchronous machines use classical constant-flux-linkage (`E'`) 3rd-order swing + `TGOV1` dynamics without subtransient/AVR/PSS flux decay, boiler pressure limits, or ZIP/induction-motor dynamic load recovery; converters are modelled as constant-PQ GFL injections (`H_vir = 0`).
+3. **Simplified Synchrophasor Front-End**: `PMURecorder` applies linear interpolation + additive Gaussian channel noise + causal 5-point OLS differentiation rather than full sub-cycle DFT/phasor-estimation filter banks, instrument-transformer saturation, or GPS time-skew transients.
+4. **Tree Extrapolation Ceiling Under Extreme Unseen Low Inertia**: Tree ensembles bound predictions within training leaf support (`>= 48.72 Hz`), increasing tail error (`P95 |e| = 0.1271 Hz`) on unseen `50%` RES contingencies that plunge to `48.26 Hz` (even though `49.50 Hz` classification remains `F1 = 1.0000`).
+
+### Future Work
+- Physics-residual hybrid learning (`AnalyticalSwingNadirRegressor` + GBDT residual boosting) to combine exact low-inertia tail extrapolation with nonlinear spatial tree corrections.
+- Grid-forming (`GFM`) virtual-inertia converter control (`H_vir > 0`, fast droop saturation), `N-2` cascading lines + generation outages, and real-time digital simulator (`RTDS` / `OPAL-RT`) HIL testing under C37.118.2 UDP streams.
+
+---
+
+## 16. Exact Reproduction Instructions
+
+### Environment Setup (Python 3.9+)
 ```bash
 cd /Users/akshat/Desktop/btp-early-pmu-fsa
-
-# 1. Create and activate a virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
-
-# 2. Install the package in editable mode with test dependencies
 pip install -e ".[dev]"
 ```
 
-*(If you prefer running commands without activating the shell environment, prefix commands with `.venv/bin/python3` or `.venv/bin/pytest` as shown below.)*
-
----
-
-## How to Run the Pipeline
-
-You can either run each of the 4 stages individually via `scripts/` (recommended for full experiments) or run the entire workflow in one command via `run_experiments.py`.
-
-### 1. Generate 50.0 Hz Contingency Scenarios (`scripts/run_simulations.py`)
-
-Simulates generator trips across buses `30–39`, renewable shares, outage loss fractions, and system load scales, saving compressed `.npz` synchrophasor archives into `data/raw/`:
-
+### Option A: Single Master Reproducible Command (`scripts/run_all.py`)
 ```bash
-# Full 450-scenario 50.0 Hz dataset (270 In-Distribution + 180 Out-of-Distribution)
-.venv/bin/python3 scripts/run_simulations.py --clean \
-  --n-scenarios 450 \
+# Full 750-scenario simulation, feature extraction, validation, training, benchmarks & 13 figures:
+.venv/bin/python3 scripts/run_all.py --config configs/default_50hz.yaml --with-figures
+
+# Fast reproduction reusing existing raw .npz archives in data/raw/:
+.venv/bin/python3 scripts/run_all.py --config configs/default_50hz.yaml --skip-simulation --with-figures
+```
+
+### Option B: Stage-by-Stage CLI Execution
+```bash
+# Stage 1: Simulate 750 contingencies (writes data/raw/*.npz, data/raw_sim/*.npz, data/manifest.json)
+.venv/bin/python3 scripts/run_simulations.py --clean --n-scenarios 750 \
   --gen-buses 30 31 32 33 34 35 36 37 38 39 \
-  --loss-fractions 1.0 0.55 0.25 \
+  --loss-fractions 1.0 0.70 0.40 \
   --penetrations 0.10 0.20 0.30 0.40 0.50 \
-  --load-scales 0.90 1.00 1.10 \
-  --fps 50 \
-  --f-nominal 50.0 \
-  --threshold 49.50 \
-  --output-dir data/raw
-```
+  --load-scales 0.80 0.90 1.00 1.10 1.20 \
+  --fps 50 --f-nominal 50.0 --threshold 49.50 \
+  --output-dir data/raw --raw-sim-dir data/raw_sim --validate
 
-Useful options for `run_simulations.py`:
-- `--n-scenarios <int>`: Maximum number of contingencies to simulate (e.g., `20` for a quick test, `450` for the full combinatorial grid).
-- `--no-macro-intertie`: Models Bus 39 as a local generator (`H = 42 s`) rather than an external grid equivalent (`H = 500 s`).
-- `--inject-noise --noise-std 0.005`: Injects Gaussian PMU frequency noise during recording and recomputes 5-point FIR ROCOF.
-- `--clean`: Deletes existing `.npz` files in `--output-dir` before generating a fresh dataset.
-- `--fast`: Generates fast analytical trajectories for quick pipeline smoke-testing.
-
----
-
-### 2. Extract Causal PMU Features (`scripts/extract_features.py`)
-
-Slices each trajectory strictly on `[t0, t0 + T_obs]` (zero access to samples after `t0 + T_obs`) and computes the 14 physical and spatial PMU features:
-
-```bash
-# Extract primary 1.0s dataset (features.npz) plus all windows [0.5s, 1.0s, 1.5s, 2.0s] and CSVs
+# Stage 2: Extract strictly causal 14-feature matrices across {0.5, 1.0, 1.5, 2.0} s
 .venv/bin/python3 scripts/extract_features.py \
-  --input-dir data/raw \
-  --t-obs 1.0 \
-  --f-nominal 50.0 \
-  --all-windows \
-  --save-csv \
+  --input-dir data/raw --t-obs 1.0 --f-nominal 50.0 \
+  --all-windows --strict-nadir --save-csv \
   --output-file data/processed/features.npz
-```
 
-To extract a single custom window (for example `0.75 s`) without overwriting the multi-window sweep:
-
-```bash
-.venv/bin/python3 scripts/extract_features.py \
-  --input-dir data/raw \
-  --t-obs 0.75 \
-  --output-file data/processed/features_t0.75s.npz
-```
-
-#### Extracted Synchrophasor Features (14 Core Physical Signals)
-
-| # | Feature Column | Short Alias | Physical Meaning |
-|---:|---|---|---|
-| 1 | `rocof_init_coi` | `init_rocof` | OLS linear slope of COI frequency over `[t0, t0 + 0.1s]` (`-DeltaP / 2H`) |
-| 2 | `rocof_peak_neg_coi` | `pk_rocof` | Minimum instantaneous COI ROCOF inside the observation window |
-| 3 | `rocof_max_abs_coi` | `max_abs_rocof` | Peak absolute COI ROCOF magnitude |
-| 4 | `rocof_mean_coi` | `mean_rocof` | Net average COI frequency decay rate `(f_end - f_start) / T_obs` |
-| 5 | `delta_f_tobs_coi` | `inst_drop` | Instantaneous COI frequency drop at `t0 + T_obs` |
-| 6 | `delta_f_max_drop_coi` | `max_drop` | Worst COI excursion below `50.0 Hz` observed within `[t0, t0 + T_obs]` |
-| 7 | `freq_integral_dev_coi` | `integ_dev` | Trapezoidal integral of `(f_COI - 50.0)` in `Hz*s` (kinetic energy deficit) |
-| 8 | `freq_integral_abs_coi` | `integ_abs` | Trapezoidal integral of `|f_COI - 50.0|` in `Hz*s` |
-| 9 | `area_spread_max` | `spread` | Maximum pairwise mean frequency spread across Areas 1, 2, and 3 |
-| 10 | `bus_freq_var_mean` | `spatial_var` | Cross-bus frequency variance across all 39 substations at `t0 + T_obs` |
-| 11 | `angle_div_max` | `max_ang` | Modulo-wrapped maximum voltage phase-angle span across the network |
-| 12 | `tie_line_angle_diff` | `tie_ang` | Wrapped phase-angle difference across primary inter-area tie-line Bus 4–5 |
-| 13 | `coi_acc_init` | `init_acc` | Initial post-fault COI deceleration slope (`0.1 s`) |
-| 14 | `coi_acc_mean` | `mean_acc` | Window-averaged COI deceleration (captures governor arrest curvature) |
-
----
-
-### 3. Train Baselines & Calibrated GBDT (`scripts/train_models.py`)
-
-Trains all four regression baselines (Ridge, Decision Tree, Random Forest, GBDT), all four classification baselines (Logistic Regression, Decision Tree, Random Forest, Uncalibrated GBDT), and the proposed `CalibratedGBDTClassifier` using disjoint `train`, `val` (calibration), and `test` partitions:
-
-```bash
-# Train every model family and export results/tables/nadir_regression.md & security_classification.md
+# Stage 3: Fit all 7 regressors & 7 classifiers on disjoint splits
 .venv/bin/python3 scripts/train_models.py \
+  --features data/processed/features.npz --model-type all \
+  --calibration platt --threshold 49.50 \
+  --output-dir models/ --tables-dir results/tables/
+
+# Stage 4: Run window, OOD, noise, latency, statistical & ablation benchmarks
+.venv/bin/python3 scripts/evaluate_all.py \
+  --data-dir data/raw --models-dir models/ \
   --features data/processed/features.npz \
-  --model-type all \
-  --calibration platt \
-  --threshold 49.50 \
-  --output-dir models/ \
-  --tables-dir results/tables/
+  --tables-dir results/tables/ --report-file results/evaluation_report.md
+
+# Stage 5: Render all 13 publication figures (PNG @ 240 DPI + vector PDF)
+.venv/bin/python3 scripts/generate_figures.py
+
+# Stage 6: Run complete 232-test isolated production suite (83 unit/integration + 149 E2E)
+.venv/bin/pytest tests/ -q
+.venv/bin/python3 tests/e2e/run_e2e.py --tier all --report-path /tmp/e2e_report.md
 ```
 
-Useful options for `train_models.py`:
-- `--model-type {linear,dt,rf,gbdt,calibrated_gb,all}`: Train a single model or the full comparison suite.
-- `--calibration {platt,isotonic}`: Select L-BFGS Platt scaling (enforcing positive slope `A > 0`) or PAVA isotonic regression (automatically falls back to Platt if `N_cal < 50`).
-- Outputs serialized `.joblib` models (`linear.joblib`, `dt.joblib`, `rf.joblib`, `gbdt.joblib`, `calibrated_gb.joblib`, `calibrated_gb_platt.joblib`, `calibrated_gb_iso.joblib`) and `models/training_metrics.json`.
+### Data Manifest & Git Tracking Policy
+Bulk trajectory archives (`data/raw/*.npz` and `data/raw_sim/*.npz`) are excluded via `.gitignore` to keep the repository lightweight, while `data/manifest.json` (recording per-scenario SHA-256 digests and aggregate dataset hash `b543ffc51c757ddc36437391eced8df375de0ac793141e80a6e3b9be2aeaab11`), `configs/default_50hz.yaml`, `results/dataset_quality_report.md`, `results/tables/`, `results/figures/`, and `docs/` are tracked in version control for deterministic verification.
 
 ---
 
-### 4. Run Evaluation & Stress Benchmarks (`scripts/evaluate_all.py`)
+## 17. Project Structure
 
-Runs the four robustness and timing benchmarks on `data/raw/` and writes CSV/Markdown tables to `results/tables/` plus the combined report at `results/evaluation_report.md`:
-
-```bash
-# Run all 4 benchmarks (window sensitivity, OOD shift, PMU noise stress, and latency)
-.venv/bin/python3 scripts/evaluate_all.py \
-  --data-dir data/raw \
-  --models-dir models/ \
-  --tables-dir results/tables/ \
-  --report-file results/evaluation_report.md
+```text
+btp-early-pmu-fsa/
+├── configs/
+│   └── default_50hz.yaml               # Canonical 750-scenario 50.0 Hz experiment configuration
+├── src/pmu_fsa/
+│   ├── simulation/
+│   │   ├── ieee39_data.py              # 39-bus 50.0 Hz network, S_mva ratings, H_39 = 42.0 s default
+│   │   ├── renewables.py               # 9-bus synchronous displacement & GFL/GFM inertia scaling
+│   │   ├── dynamic_engine.py           # NR AC power flow, two-segment Kron ODEs, COI nadir labels
+│   │   ├── pmu_recorder.py             # 50/25 fps resampling, area-weighted f_sys_pmu, causal 5-pt OLS ROCOF
+│   │   ├── scenario_generator.py       # 750-scenario grid, MD5 partitioner, raw_sim vs raw separation
+│   │   └── dataset_validator.py        # 14 automated dataset/causality checks & SHA-256 manifest
+│   ├── features/
+│   │   ├── window_slicer.py            # Pre-nadir causal windowing & forbidden-channel firewall
+│   │   └── extractor.py                # 14 canonical spatiotemporal PMU features & NaN masking
+│   ├── models/
+│   │   ├── regressors.py               # Mean, Analytical Swing, Ridge, DT, RF, GBDT, LightGBM
+│   │   ├── classifiers.py              # Logistic, DT, RF, GBDT, LightGBM, FNR_insecure & threshold sweep
+│   │   ├── calibrated_gb.py            # Two-stage GBDT + Platt / PAVA Isotonic + quantile/conformal PIs
+│   │   └── calibration_metrics.py      # 10-bin ECE, MCE, Brier score & reliability binning
+│   ├── evaluation/
+│   │   ├── sensitivity.py              # Unsmoothed T_obs in {0.5..2.0} s sweep on test & ood_test
+│   │   ├── ood_generalization.py       # ID vs OOD-RES, OOD-Load & OOD-Combined evaluation
+│   │   ├── noise_stress.py             # Seeded multi-channel PMU noise sweep (0-50 mHz)
+│   │   ├── latency.py                  # 6-stage perf_counter_ns profiler vs measured 10s ODE sim
+│   │   ├── statistical_tests.py        # Paired bootstrap CIs, Wilcoxon tests, learning & seed curves
+│   │   └── interpretability.py         # Permutation importance, correlations, 13-bus & 25-fps ablations
+│   └── pipeline/
+│       └── run_experiments.py          # Programmatic ExperimentConfig & ExperimentPipeline API
+├── scripts/
+│   ├── run_all.py                      # Single master reproducible pipeline runner
+│   ├── run_simulations.py              # CLI Stage 1: Trajectory generation & validation
+│   ├── extract_features.py             # CLI Stage 2: Multi-window causal feature extraction
+│   ├── train_models.py                 # CLI Stage 3: Disjoint model fitting & calibration
+│   ├── evaluate_all.py                 # CLI Stage 4: Full benchmark, statistical & ablation suite
+│   ├── generate_figures.py             # CLI Stage 5: 13 publication PNG + PDF figure generator
+│   └── generate_project_guide.py       # HTML-to-PDF builder for BTP_Complete_Project_Guide.pdf
+├── data/
+│   ├── manifest.json                   # SHA-256 checksums & dataset provenance manifest
+│   ├── raw/                            # 750 observable PMU .npz streams (git-ignored)
+│   ├── raw_sim/                        # 750 internal ODE simulator .npz archives (git-ignored)
+│   └── processed/                      # Causal 14-feature .npz/.csv matrices & extraction_report.json
+├── models/                             # Serialized .joblib estimators & training_metrics.json
+├── results/
+│   ├── dataset_quality_report.md       # 14-check validation & pre-nadir causality audit
+│   ├── evaluation_report.md            # Consolidated benchmark & statistical evaluation report
+│   ├── tables/                         # 26 CSV & Markdown experimental result tables
+│   └── figures/                        # fig01..fig13 publication figures (.png @ 240 DPI & .pdf)
+├── docs/
+│   ├── IEEE_BTP_Research_Paper.md      # 24-section IEEE-styled research manuscript (Markdown)
+│   ├── IEEE_BTP_Research_Paper.pdf     # Rendered publication-ready IEEE research paper (PDF)
+│   ├── BTP_Final_Presentation.html     # 16-slide 16:9 widescreen presentation source
+│   └── BTP_Final_Presentation.pdf      # Rendered 16-slide widescreen presentation deck (PDF)
+├── BTP_Complete_Project_Guide.pdf      # Zero-to-Hero 50-Hz visual project manual & Viva Q&A
+└── tests/                              # 232 isolated 50-Hz production tests (83 unit + 149 E2E)
 ```
-
-To run only specific benchmarks (for example, just OOD shift and latency):
-
-```bash
-.venv/bin/python3 scripts/evaluate_all.py \
-  --data-dir data/raw \
-  --benchmarks ood latency
-```
-
----
-
-### Single-Command End-to-End Runner (`run_experiments.py`)
-
-If you want to run simulation, multi-window extraction, training, benchmarking, and plot export (`results/figures/window_sensitivity_curve.png`) in one step:
-
-```bash
-# Run a compact 30-scenario end-to-end experiment from scratch
-.venv/bin/python3 src/pmu_fsa/pipeline/run_experiments.py \
-  --n-scenarios 30 \
-  --t-obs 1.0 \
-  --output-dir results/
-
-# Or reuse existing scenarios in data/raw/ without re-simulating
-.venv/bin/python3 src/pmu_fsa/pipeline/run_experiments.py --skip-simulation
-```
-
----
-
-## Using the Python API Directly
-
-You can import `pmu_fsa` directly in Python scripts or notebooks for custom contingency experiments:
-
-```python
-import joblib
-from pmu_fsa.simulation.dynamic_engine import DynamicSimulator
-from pmu_fsa.simulation.renewables import RenewablePenetrationConfig
-from pmu_fsa.features.extractor import FeatureExtractor
-
-sim = DynamicSimulator(
-    load_scaling=1.0,
-    renewable_config=RenewablePenetrationConfig(p_ren=0.25),
-    macro_intertie=True,
-    f_nominal=50.0,
-    security_threshold_hz=49.50,
-)
-traj = sim.simulate(t_span=(0.0, 10.0), t_disturb=1.0, tripped_bus=35, p_loss_mw=600.0, fps=50)
-
-extractor = FeatureExtractor(t_obs=1.0, f_nominal=50.0)
-X_row = extractor.extract_scenario(traj, t_obs=1.0)
-
-gbdt_reg = joblib.load("models/gbdt.joblib")
-cal_clf = joblib.load("models/calibrated_gb.joblib")
-
-pred_nadir = gbdt_reg.predict(X_row)[0]
-p_sec, ci_low, ci_high = cal_clf.predict_with_intervals(X_row, confidence_level=0.95)
-
-print(f"True Nadir:      {traj['metadata']['ground_truth_nadir']:.4f} Hz")
-print(f"Predicted Nadir: {pred_nadir:.4f} Hz")
-print(f"P(Secure):       {p_sec[0]:.4f}  (95% CI: [{ci_low[0]:.4f}, {ci_high[0]:.4f}])")
-```
-
----
-
-## Running the Test Suite (454 Tests)
-
-The test suite verifies Kron reduction physics, IEEE C37.118.2 binary frame serialization & `CRC-CCITT` checksums, zero future data leakage under post-window `NaN` poisoning, PAVA monotonicity, OOD partition disjointness, and sub-10 ms latency budgets:
-
-```bash
-# Run the complete 454-test suite (111 unit tests + 343 end-to-end tests)
-.venv/bin/pytest tests/ -v
-
-# Run only unit & causality tests
-.venv/bin/pytest tests/test_*.py -v
-
-# Run end-to-end suites by tier (1, 2, 3, 4, 5, or all)
-.venv/bin/python3 tests/e2e/run_e2e.py --tier all
-```
-
----
-
-## 450-Scenario 50.0 Hz Pilot Results Summary
-
-Dataset: **450 unique contingencies** (`10` generator buses × `3` loss fractions × `5` renewable levels `10%–50%` × `3` load scales `0.90–1.10`), partitioned into **270 In-Distribution (`10%–30%` RES: `186 train`, `48 val`, `36 test`)** and **180 Out-of-Distribution (`40%–50%` RES: `ood_test`)** scenarios.
-
-### Continuous Nadir Regression (Held-Out ID Test Split, `T_obs = 1.0 s`)
-
-| Model | MAE (Hz) | RMSE (Hz) | `R2` | 95% Bootstrap CI (Hz) | Inference (ms/scen) |
-|---|---:|---:|---:|---|---:|
-| Ridge Linear Regression | 0.0417 | 0.0515 | 0.9717 | `[0.0321, 0.0521]` | 0.0175 |
-| Decision Tree (CART) | 0.0287 | 0.0403 | 0.9827 | `[0.0212, 0.0393]` | 0.0130 |
-| Random Forest (50 Trees) | **0.0184** | **0.0232** | **0.9943** | `[0.0142, 0.0227]` | 0.2676 |
-| Gradient Boosting (GBDT) | **0.0222** | **0.0289** | **0.9911** | `[0.0169, 0.0288]` | **0.0450** |
-
-### Observation Window Sensitivity (All 450 Scenarios Combined)
-
-| Window `T_obs` | Nadir MAE (Hz) | `R2` | Security F1 | ECE | Brier | `FNR_insecure` | Lead Time `t_lead` |
-|---:|---:|---:|---:|---:|---:|---:|---:|
-| `0.50 s` | 0.0531 | 0.9822 | 0.9293 | 0.0471 | 0.0412 | 0.0120 | **6.56 s** |
-| `1.00 s` | 0.0531 | 0.9722 | 0.9307 | **0.0293** | 0.0300 | 0.0241 | **6.06 s** |
-| `1.50 s` | 0.0531 | 0.9619 | **0.9400** | 0.0357 | **0.0272** | 0.0120 | **5.56 s** |
-| `2.00 s` | 0.0531 | 0.9718 | **0.9400** | 0.0383 | 0.0295 | 0.0120 | **5.06 s** |
-
-### OOD Generalization, Noise Robustness & Online Latency
-
-- **In-Distribution (`10%–30%` RES, `N = 270`)**: `MAE = 0.0422 Hz`, `F1 = 0.9953`, `ECE = 0.0064`, `Brier = 0.0024`.
-- **Out-of-Distribution (`40%–50%` RES, `N = 180`)**: `MAE = 0.2731 Hz`, `F1 = 0.8547`, `ECE = 0.0812`, `Brier = 0.0700`.
-- **PMU Measurement Noise (`sigma_f` from `0` to `20 mHz`)**: Security `F1` degrades smoothly from `0.9848` (clean) -> `0.9279` (`5 mHz` Class M) -> `0.9003` (`10 mHz`) -> `0.8667` (`20 mHz`).
-- **Online Execution Speed**: `0.279 ms` feature extraction + `0.206 ms` inference = **`0.485 ms` total** (`721.6x` faster than `350.0 ms` dynamic ODE integration).
