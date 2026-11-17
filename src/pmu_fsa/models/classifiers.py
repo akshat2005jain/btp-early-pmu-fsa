@@ -1,21 +1,22 @@
-"""Binary classifiers for post-disturbance frequency security assessment."""
+"""Binary classifiers for post-disturbance frequency security assessment (50.0 Hz standard)."""
 
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Dict, List, Optional, Type, Union
 
 import numpy as np
 from sklearn.base import BaseEstimator, ClassifierMixin
-from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
+from sklearn.ensemble import (
+    GradientBoostingClassifier,
+    HistGradientBoostingClassifier,
+    RandomForestClassifier,
+)
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
     auc,
-    f1_score,
     precision_recall_curve,
-    precision_score,
-    recall_score,
     roc_auc_score,
 )
 from sklearn.preprocessing import StandardScaler
@@ -23,6 +24,127 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.utils.class_weight import compute_sample_weight
 
 from pmu_fsa.models.regressors import LinearNadirRegressor
+
+try:
+    from lightgbm import LGBMClassifier as _LGBMClassifier
+    _HAS_LIGHTGBM = True
+except (ImportError, OSError):
+    _LGBMClassifier = None
+    _HAS_LIGHTGBM = False
+
+
+DEFAULT_THRESHOLD_SWEEP: List[float] = [0.3, 0.5, 0.6, 0.7, 0.8, 0.9]
+
+
+def compute_binary_security_metrics(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    p_secure: Optional[np.ndarray] = None,
+) -> Dict[str, Any]:
+    """Compute confusion counts, F1, PR-AUC, ROC-AUC, missed-insecure rate, and false-alarm rate.
+
+    Convention: class 1 = secure (nadir >= threshold), class 0 = insecure (nadir < threshold).
+    - FP (y_true=0, y_pred=1): dangerous missed insecure contingency -> fnr_insecure = FP / (TN + FP).
+    - FN (y_true=1, y_pred=0): conservative false alarm on secure grid -> fpr_secure = FN / (TP + FN).
+    """
+    yt = np.asarray(y_true, dtype=int).ravel()
+    yp = np.asarray(y_pred, dtype=int).ravel()
+    if len(yt) != len(yp):
+        raise ValueError(f"Sample count mismatch: y_true has {len(yt)}, y_pred has {len(yp)}")
+    if len(yt) == 0:
+        return {
+            "accuracy": 0.0,
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "fnr": 0.0,
+            "fpr_secure": 0.0,
+            "fnr_insecure": 0.0,
+            "missed_insecure_count": 0,
+            "false_alarm_count": 0,
+            "roc_auc": 0.5,
+            "pr_auc": 0.0,
+            "tp": 0,
+            "tn": 0,
+            "fp": 0,
+            "fn": 0,
+        }
+
+    tp = int(np.sum((yt == 1) & (yp == 1)))
+    tn = int(np.sum((yt == 0) & (yp == 0)))
+    fp = int(np.sum((yt == 0) & (yp == 1)))
+    fn = int(np.sum((yt == 1) & (yp == 0)))
+
+    precision = float(tp / (tp + fp)) if (tp + fp) > 0 else 0.0
+    recall = float(tp / (tp + fn)) if (tp + fn) > 0 else 0.0
+    f1 = float(2.0 * precision * recall / (precision + recall)) if (precision + recall) > 0.0 else 0.0
+    accuracy = float(accuracy_score(yt, yp))
+
+    fpr_secure = float(fn / (tp + fn)) if (tp + fn) > 0 else 0.0
+    total_insecure = tn + fp
+    fnr_insecure = float(fp / total_insecure) if total_insecure > 0 else 0.0
+
+    if p_secure is not None and len(p_secure) == len(yt) and len(np.unique(yt)) > 1:
+        ps = np.asarray(p_secure, dtype=float).ravel()
+        roc_auc = float(roc_auc_score(yt, ps))
+        prec_arr, rec_arr, _ = precision_recall_curve(yt, ps)
+        pr_auc = float(auc(rec_arr, prec_arr))
+    else:
+        roc_auc = 0.5
+        pr_auc = 1.0 if int(yt[0]) == 1 else 0.0
+
+    return {
+        "accuracy": accuracy,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "fnr": fpr_secure,
+        "fpr_secure": fpr_secure,
+        "fnr_insecure": fnr_insecure,
+        "missed_insecure_count": fp,
+        "false_alarm_count": fn,
+        "roc_auc": roc_auc,
+        "pr_auc": pr_auc,
+        "tp": tp,
+        "tn": tn,
+        "fp": fp,
+        "fn": fn,
+    }
+
+
+def evaluate_probability_threshold_sweep(
+    y_true: np.ndarray,
+    p_secure: np.ndarray,
+    thresholds: Optional[List[float]] = None,
+) -> List[Dict[str, Any]]:
+    """Evaluate classification & safety metrics across decision probability thresholds."""
+    sweep = thresholds if thresholds is not None else list(DEFAULT_THRESHOLD_SWEEP)
+    yt = np.asarray(y_true, dtype=int).ravel()
+    ps = np.asarray(p_secure, dtype=float).ravel()
+
+    rows: List[Dict[str, Any]] = []
+    for tau in sweep:
+        tau_f = float(tau)
+        yp = np.where(ps >= tau_f, 1, 0).astype(int)
+        m = compute_binary_security_metrics(yt, yp, p_secure=ps)
+        rows.append({
+            "proba_threshold": tau_f,
+            "tp": m["tp"],
+            "tn": m["tn"],
+            "fp": m["fp"],
+            "fn": m["fn"],
+            "missed_insecure_count": m["missed_insecure_count"],
+            "false_alarm_count": m["false_alarm_count"],
+            "fnr_insecure": m["fnr_insecure"],
+            "fpr_secure": m["fpr_secure"],
+            "precision": m["precision"],
+            "recall": m["recall"],
+            "f1": m["f1"],
+            "accuracy": m["accuracy"],
+            "pr_auc": m["pr_auc"],
+            "roc_auc": m["roc_auc"],
+        })
+    return rows
 
 
 class BaseSecurityClassifier(BaseEstimator, ClassifierMixin):
@@ -62,11 +184,13 @@ class BaseSecurityClassifier(BaseEstimator, ClassifierMixin):
             return np.empty((0, self.n_features_in_ or 0), dtype=float)
 
         if hasattr(X, "columns"):
-            cols = list(X.columns)
+            cols = [str(c) for c in X.columns]
             if is_fit:
                 self.feature_names_in_ = cols
             X_arr = np.asarray(X.values, dtype=float)
         else:
+            if is_fit:
+                self.feature_names_in_ = None
             X_arr = np.asarray(X, dtype=float)
 
         if X_arr.ndim == 1:
@@ -102,11 +226,9 @@ class BaseSecurityClassifier(BaseEstimator, ClassifierMixin):
         if len(y_flat) == 0:
             raise ValueError("Cannot process empty target vector")
 
-        # Auto-binarize continuous nadir frequencies, adapting threshold if 60 Hz fixtures are passed
         if np.any(y_flat > 1.5):
-            eff_thresh = 59.5 if (self.threshold == 49.5 and float(np.median(y_flat)) > 54.0) else self.threshold
-            self._effective_threshold_ = eff_thresh
-            y_binary = np.where(y_flat >= eff_thresh, 1, 0).astype(int)
+            self._effective_threshold_ = float(self.threshold)
+            y_binary = np.where(y_flat >= self.threshold, 1, 0).astype(int)
         else:
             y_binary = np.asarray(y_flat, dtype=int)
             y_binary = np.where(y_binary >= 1, 1, 0)
@@ -196,57 +318,26 @@ class BaseSecurityClassifier(BaseEstimator, ClassifierMixin):
         y: Any,
         proba_thresh: float = 0.5,
         threshold: Optional[float] = None,
-    ) -> Dict[str, float]:
+    ) -> Dict[str, Any]:
         """Compute classification metrics including missed-insecurity rate (fnr_insecure)."""
         thresh = threshold if threshold is not None else proba_thresh
         y_true = self._prepare_y(y)
         y_pred = self.predict(X, proba_thresh=thresh)
         probs = self.predict_proba(X)
-        p_sec = probs[:, 1] if len(probs) > 0 else np.array([])
+        p_sec = probs[:, 1] if len(probs) > 0 else np.array([], dtype=float)
+        return compute_binary_security_metrics(y_true, y_pred, p_secure=p_sec)
 
-        if len(y_true) != len(y_pred):
-            raise ValueError(
-                f"Sample count mismatch: y_true has {len(y_true)}, y_pred has {len(y_pred)}"
-            )
-
-        tp = int(np.sum((y_true == 1) & (y_pred == 1)))
-        tn = int(np.sum((y_true == 0) & (y_pred == 0)))
-        fp = int(np.sum((y_true == 0) & (y_pred == 1)))
-        fn = int(np.sum((y_true == 1) & (y_pred == 0)))
-
-        precision = float(tp / (tp + fp)) if (tp + fp) > 0 else 0.0
-        recall = float(tp / (tp + fn)) if (tp + fn) > 0 else 0.0
-        f1 = float(2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
-        accuracy = float(accuracy_score(y_true, y_pred))
-
-        fnr = float(fn / (fn + tp)) if (fn + tp) > 0 else 0.0
-
-        # Since class 1 = secure, FP means predicting secure on a genuinely insecure event
-        total_insecure = tn + fp
-        fnr_insecure = float(fp / total_insecure) if total_insecure > 0 else 0.0
-
-        if len(np.unique(y_true)) > 1 and len(p_sec) > 0:
-            roc_auc = float(roc_auc_score(y_true, p_sec))
-            prec_arr, rec_arr, _ = precision_recall_curve(y_true, p_sec)
-            pr_auc = float(auc(rec_arr, prec_arr))
-        else:
-            roc_auc = 0.5
-            pr_auc = 1.0 if (len(y_true) > 0 and y_true[0] == 1) else 0.0
-
-        return {
-            "accuracy": accuracy,
-            "precision": precision,
-            "recall": recall,
-            "f1": f1,
-            "fnr": fnr,
-            "fnr_insecure": fnr_insecure,
-            "roc_auc": roc_auc,
-            "pr_auc": pr_auc,
-            "tp": tp,
-            "tn": tn,
-            "fp": fp,
-            "fn": fn,
-        }
+    def evaluate_threshold_sweep(
+        self,
+        X: Any,
+        y: Any,
+        thresholds: Optional[List[float]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Evaluate confusion counts and FNR_insecure across probability thresholds."""
+        y_true = self._prepare_y(y)
+        probs = self.predict_proba(X)
+        p_sec = probs[:, 1] if len(probs) > 0 else np.array([], dtype=float)
+        return evaluate_probability_threshold_sweep(y_true, p_sec, thresholds=thresholds)
 
 
 class BinarySecurityClassifier(BaseSecurityClassifier):
@@ -276,17 +367,20 @@ class BinarySecurityClassifier(BaseSecurityClassifier):
         if len(X_proc) != len(y_arr):
             raise ValueError(f"Sample count mismatch: X has {len(X_proc)}, y has {len(y_arr)}")
 
-        eff_thresh = self.threshold
+        eff_thresh = float(self.threshold)
         if np.any(y_arr > 1.5):
-            if self.threshold == 49.5 and float(np.median(y_arr)) > 54.0:
-                eff_thresh = 59.5
             y_binary = (y_arr >= eff_thresh).astype(int)
         else:
             y_binary = (y_arr >= 0.5).astype(int)
         self._effective_threshold_ = eff_thresh
 
         unique_classes = np.unique(y_binary)
-        if len(unique_classes) == 1:
+        if len(unique_classes) == 1 and self.backend != "regressor":
+            self.constant_class_ = int(unique_classes[0])
+            self.model_ = None
+            self.regressor_ = None
+            return self
+        elif len(unique_classes) == 1 and not np.any(y_arr > 1.5):
             self.constant_class_ = int(unique_classes[0])
             self.model_ = None
             self.regressor_ = None
@@ -295,15 +389,16 @@ class BinarySecurityClassifier(BaseSecurityClassifier):
             self.constant_class_ = None
 
         if self.backend == "regressor":
-            # Synthesize proxy frequencies around threshold when given binary labels directly
             if not np.any(y_arr > 1.5):
                 y_reg = np.where(y_arr >= 1, eff_thresh + 0.3, eff_thresh - 0.5)
             else:
                 y_reg = y_arr
 
+            clip_low = min(45.0, float(np.min(y_reg)) - 2.0)
+            clip_high = max(50.5, float(np.max(y_reg)) + 1.0)
             self.regressor_ = LinearNadirRegressor(
                 alpha=self.alpha,
-                clip_bounds=(45.0, 50.5),
+                clip_bounds=(clip_low, clip_high),
                 scale_features=True,
             )
             self.regressor_.fit(X_proc, y_reg)
@@ -314,6 +409,7 @@ class BinarySecurityClassifier(BaseSecurityClassifier):
                 "decision_tree": DecisionTreeSecurityClassifier(threshold=eff_thresh),
                 "random_forest": RandomForestSecurityClassifier(threshold=eff_thresh),
                 "gradient_boosting": GradientBoostingSecurityClassifier(threshold=eff_thresh),
+                "lightgbm": LightGBMSecurityClassifier(threshold=eff_thresh),
             }
             if self.backend not in backend_map:
                 raise ValueError(f"Unknown backend: '{self.backend}'")
@@ -438,8 +534,8 @@ class RandomForestSecurityClassifier(BaseSecurityClassifier):
     def __init__(
         self,
         threshold: float = 49.5,
-        n_estimators: int = 50,
-        max_depth: Optional[int] = 8,
+        n_estimators: int = 100,
+        max_depth: Optional[int] = 10,
         min_samples_split: int = 2,
         min_samples_leaf: int = 1,
         class_weight: Optional[Union[str, Dict[Any, float]]] = "balanced",
@@ -484,8 +580,8 @@ class GradientBoostingSecurityClassifier(BaseSecurityClassifier):
     def __init__(
         self,
         threshold: float = 49.5,
-        n_estimators: int = 50,
-        learning_rate: float = 0.1,
+        n_estimators: int = 100,
+        learning_rate: float = 0.08,
         max_depth: int = 4,
         min_samples_split: int = 2,
         min_samples_leaf: int = 1,
@@ -529,6 +625,75 @@ class GradientBoostingSecurityClassifier(BaseSecurityClassifier):
         self.model_.fit(X, y, sample_weight=sample_weight)
 
 
+class LightGBMSecurityClassifier(BaseSecurityClassifier):
+    """Leaf-wise histogram gradient boosting security classifier (LightGBM / HistGBDT)."""
+
+    def __init__(
+        self,
+        threshold: float = 49.5,
+        n_estimators: int = 100,
+        learning_rate: float = 0.08,
+        num_leaves: int = 15,
+        max_depth: Optional[int] = 5,
+        min_child_samples: int = 5,
+        reg_lambda: float = 1e-2,
+        class_weight: Optional[Union[str, Dict[Any, float]]] = "balanced",
+        scale_features: bool = False,
+        random_state: Optional[int] = 42,
+    ) -> None:
+        super().__init__(
+            threshold=threshold,
+            scale_features=scale_features,
+            class_weight=class_weight,
+        )
+        self.n_estimators = int(n_estimators)
+        self.learning_rate = float(learning_rate)
+        self.num_leaves = int(num_leaves)
+        self.max_depth = max_depth
+        self.min_child_samples = int(min_child_samples)
+        self.reg_lambda = float(reg_lambda)
+        self.random_state = random_state
+        self.model_name = "lightgbm_security"
+        self.backend_: str = "lightgbm" if _HAS_LIGHTGBM else "sklearn_hist_gbdt"
+
+    def _fit_underlying_model(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        sample_weight: Optional[np.ndarray] = None,
+    ) -> None:
+        eff_min_samples = max(1, min(self.min_child_samples, max(1, len(X) // 3)))
+        if self.class_weight == "balanced" and sample_weight is None:
+            sample_weight = compute_sample_weight("balanced", y)
+
+        if _HAS_LIGHTGBM and _LGBMClassifier is not None:
+            self.backend_ = "lightgbm"
+            self.model_ = _LGBMClassifier(
+                n_estimators=self.n_estimators,
+                learning_rate=self.learning_rate,
+                num_leaves=max(2, self.num_leaves),
+                max_depth=-1 if self.max_depth is None else int(self.max_depth),
+                min_child_samples=eff_min_samples,
+                reg_lambda=self.reg_lambda,
+                random_state=self.random_state,
+                n_jobs=1,
+                verbose=-1,
+            )
+            self.model_.fit(X, y, sample_weight=sample_weight)
+        else:
+            self.backend_ = "sklearn_hist_gbdt"
+            self.model_ = HistGradientBoostingClassifier(
+                max_iter=self.n_estimators,
+                learning_rate=self.learning_rate,
+                max_leaf_nodes=max(2, self.num_leaves),
+                max_depth=self.max_depth,
+                min_samples_leaf=eff_min_samples,
+                l2_regularization=self.reg_lambda,
+                random_state=self.random_state,
+            )
+            self.model_.fit(X, y, sample_weight=sample_weight)
+
+
 CLASSIFIER_REGISTRY: Dict[str, Type[BaseSecurityClassifier]] = {
     "binary": BinarySecurityClassifier,
     "binary_security": BinarySecurityClassifier,
@@ -542,6 +707,8 @@ CLASSIFIER_REGISTRY: Dict[str, Type[BaseSecurityClassifier]] = {
     "gradient_boosting": GradientBoostingSecurityClassifier,
     "gbdt": GradientBoostingSecurityClassifier,
     "gbc": GradientBoostingSecurityClassifier,
+    "lightgbm": LightGBMSecurityClassifier,
+    "lgbm": LightGBMSecurityClassifier,
 }
 
 
@@ -589,5 +756,13 @@ class SecurityClassifier:
         y: Any,
         proba_thresh: float = 0.5,
         threshold: Optional[float] = None,
-    ) -> Dict[str, float]:
+    ) -> Dict[str, Any]:
         return self.model_.evaluate(X, y, proba_thresh=proba_thresh, threshold=threshold)
+
+    def evaluate_threshold_sweep(
+        self,
+        X: Any,
+        y: Any,
+        thresholds: Optional[List[float]] = None,
+    ) -> List[Dict[str, Any]]:
+        return self.model_.evaluate_threshold_sweep(X, y, thresholds=thresholds)

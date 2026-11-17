@@ -1,0 +1,45 @@
+# Canonical 50.0 Hz IEEE 39-Bus Early PMU Frequency-Security Assessment Configuration
+seed: 42
+f_nominal: 50.0
+security_threshold_hz: 49.50
+macro_intertie: false
+fps: 50
+t_disturb: 1.0
+t_max: 10.0
+
+# 750-scenario full combinatorial contingency grid (10 gens x 3 losses x 5 RES x 5 loads)
+n_scenarios: 750
+gen_buses: [30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
+loss_fractions: [1.0, 0.70, 0.40]
+penetrations: [0.10, 0.20, 0.30, 0.40, 0.50]
+load_scales: [0.80, 0.90, 1.00, 1.10, 1.20]
+
+# Scenario-level disjoint partitioning
+train_ratio: 0.55
+val_ratio: 0.25
+test_ratio: 0.20
+
+# Causal PMU feature extraction
+t_obs: 1.0
+window_lengths: [0.5, 1.0, 1.5, 2.0]
+strict_nadir: true
+save_csv: true
+
+# Evaluation & robustness sweeps
+noise_std: 0.0
+noise_levels: [0.0, 0.005, 0.01, 0.02, 0.05]
+model_type: all
+calibration: platt
+
+# Artifact directories
+raw_data_dir: data/raw
+raw_sim_dir: data/raw_sim
+processed_data_dir: data/processed
+manifest_file: data/manifest.json
+dataset_report_file: results/dataset_quality_report.md
+models_dir: models
+output_dir: results
+tables_dir: results/tables
+figures_dir: results/figures
+report_file: results/evaluation_report.md
+headless: true

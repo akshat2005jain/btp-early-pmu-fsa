@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List
 import numpy as np
 
 
@@ -21,7 +21,7 @@ def _prepare_prob_array(y: Any, name: str = "y_prob") -> np.ndarray:
     return arr
 
 
-def _prepare_true_array(y: Any, name: str = "y_true") -> np.ndarray:
+def _prepare_true_array(y: Any, name: str = "y_true", threshold: float = 49.50) -> np.ndarray:
     if y is None:
         raise ValueError(f"Cannot compute calibration metrics on None {name}")
     arr = np.asarray(y, dtype=np.float64).ravel()
@@ -29,18 +29,16 @@ def _prepare_true_array(y: Any, name: str = "y_true") -> np.ndarray:
         raise ValueError(f"Cannot compute calibration metrics on empty {name}")
     if np.any(np.isnan(arr)) or np.any(np.isinf(arr)):
         raise ValueError(f"Input {name} contains NaN or Inf values")
-    # Auto-binarize continuous nadir frequencies (59.5 Hz for 60 Hz fixtures, else 49.5 Hz)
     if np.any(arr > 1.5):
-        thresh = 59.5 if float(np.median(arr)) > 54.0 else 49.5
-        arr = np.where(arr >= thresh, 1.0, 0.0)
+        arr = np.where(arr >= float(threshold), 1.0, 0.0)
     else:
         arr = np.where(arr >= 0.5, 1.0, 0.0)
     return arr
 
 
-def brier_score(y_true: Any, y_prob: Any) -> float:
+def brier_score(y_true: Any, y_prob: Any, threshold: float = 49.50) -> float:
     """Compute mean squared probability error (Brier score)."""
-    yt = _prepare_true_array(y_true, "y_true")
+    yt = _prepare_true_array(y_true, "y_true", threshold=threshold)
     yp = _prepare_prob_array(y_prob, "y_prob")
     if yt.size != yp.size:
         raise ValueError(f"Length mismatch: len(y_true)={yt.size}, len(y_prob)={yp.size}")
@@ -48,9 +46,14 @@ def brier_score(y_true: Any, y_prob: Any) -> float:
     return float(np.mean((yp - yt) ** 2))
 
 
-def expected_calibration_error(y_true: Any, y_prob: Any, n_bins: int = 10) -> float:
+def expected_calibration_error(
+    y_true: Any,
+    y_prob: Any,
+    n_bins: int = 10,
+    threshold: float = 49.50,
+) -> float:
     """Compute Expected Calibration Error (ECE) across equal-width bins."""
-    yt = _prepare_true_array(y_true, "y_true")
+    yt = _prepare_true_array(y_true, "y_true", threshold=threshold)
     yp = _prepare_prob_array(y_prob, "y_prob")
     if yt.size != yp.size:
         raise ValueError(f"Length mismatch: len(y_true)={yt.size}, len(y_prob)={yp.size}")
@@ -78,9 +81,14 @@ def expected_calibration_error(y_true: Any, y_prob: Any, n_bins: int = 10) -> fl
     return float(ece)
 
 
-def maximum_calibration_error(y_true: Any, y_prob: Any, n_bins: int = 10) -> float:
+def maximum_calibration_error(
+    y_true: Any,
+    y_prob: Any,
+    n_bins: int = 10,
+    threshold: float = 49.50,
+) -> float:
     """Compute Maximum Calibration Error (MCE) across non-empty bins."""
-    yt = _prepare_true_array(y_true, "y_true")
+    yt = _prepare_true_array(y_true, "y_true", threshold=threshold)
     yp = _prepare_prob_array(y_prob, "y_prob")
     if yt.size != yp.size:
         raise ValueError(f"Length mismatch: len(y_true)={yt.size}, len(y_prob)={yp.size}")
@@ -108,9 +116,14 @@ def maximum_calibration_error(y_true: Any, y_prob: Any, n_bins: int = 10) -> flo
     return float(mce)
 
 
-def reliability_diagram(y_true: Any, y_prob: Any, n_bins: int = 10) -> Dict[str, Any]:
+def reliability_diagram(
+    y_true: Any,
+    y_prob: Any,
+    n_bins: int = 10,
+    threshold: float = 49.50,
+) -> Dict[str, Any]:
     """Bin predicted probabilities and empirical accuracies for reliability plots."""
-    yt = _prepare_true_array(y_true, "y_true")
+    yt = _prepare_true_array(y_true, "y_true", threshold=threshold)
     yp = _prepare_prob_array(y_prob, "y_prob")
     if yt.size != yp.size:
         raise ValueError(f"Length mismatch: len(y_true)={yt.size}, len(y_prob)={yp.size}")
@@ -148,17 +161,23 @@ def reliability_diagram(y_true: Any, y_prob: Any, n_bins: int = 10) -> Dict[str,
     }
 
 
-def compute_calibration_metrics(y_true: Any, y_prob: Any, n_bins: int = 10) -> Dict[str, Any]:
-    """Compute Brier score, ECE, MCE, and reliability diagram bins."""
-    bs = brier_score(y_true, y_prob)
-    ece = expected_calibration_error(y_true, y_prob, n_bins=n_bins)
-    mce = maximum_calibration_error(y_true, y_prob, n_bins=n_bins)
-    diagram = reliability_diagram(y_true, y_prob, n_bins=n_bins)
+def compute_calibration_metrics(
+    y_true: Any,
+    y_prob: Any,
+    n_bins: int = 10,
+    threshold: float = 49.50,
+) -> Dict[str, Any]:
+    """Compute Brier score, ECE, MCE, and reliability diagram bins (standardized n_bins=10)."""
+    bs = brier_score(y_true, y_prob, threshold=threshold)
+    ece = expected_calibration_error(y_true, y_prob, n_bins=n_bins, threshold=threshold)
+    mce = maximum_calibration_error(y_true, y_prob, n_bins=n_bins, threshold=threshold)
+    diagram = reliability_diagram(y_true, y_prob, n_bins=n_bins, threshold=threshold)
 
     return {
         "brier_score": bs,
         "ece": ece,
         "mce": mce,
+        "n_bins": int(n_bins),
         "bin_accuracies": diagram["bin_accuracies"],
         "bin_confidences": diagram["bin_confidences"],
         "bin_counts": diagram["bin_counts"],

@@ -8,15 +8,22 @@ __pycache__/
 dist/
 build/
 
-# Local wheel cache & artifacts
+# Local wheel cache & test artifacts
 /tmp/local_wheels/
 .pytest_cache/
 .coverage
 
-# Data & results
-*.npz
+# Raw bulk trajectory archives (reproducible via scripts/run_simulations.py & verified against data/manifest.json)
+data/raw/*.npz
+data/raw_sim/*.npz
 *.parquet
 *.h5
+
+# Explicitly keep dataset manifest, configs, docs, and results tracked
+!data/manifest.json
+!configs/**
+!docs/**
+!results/**
 
 # OS / Editor
 .DS_Store
