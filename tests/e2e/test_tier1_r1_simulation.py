@@ -1,72 +1,91 @@
-"""End-to-end tests for IEEE 39-bus simulation and PMU recording."""
+"""End-to-end Tier 1 tests for 50 Hz IEEE 39-bus simulation, renewables, PMU recording, and dataset validation."""
+
+from __future__ import annotations
 
 import math
-import copy
-from typing import Dict, Any, List
+from pathlib import Path
 
+import numpy as np
+import pytest
+
+from pmu_fsa.features.extractor import CANONICAL_FEATURE_NAMES, FeatureExtractor
+from pmu_fsa.simulation.dataset_validator import validate_dataset
+from pmu_fsa.simulation.dynamic_engine import (
+    DynamicSimulator,
+    compute_kron_reduction,
+    solve_power_flow,
+)
+from pmu_fsa.simulation.ieee39_data import (
+    BASE_MVA,
+    GENERATOR_BUSES,
+    NOMINAL_FREQ,
+    PHYSICAL_FREQ_BOUNDS,
+    SECURITY_THRESHOLD_HZ,
+    get_ieee39_bus_data,
+    get_ieee39_gen_data,
+)
+from pmu_fsa.simulation.pmu_recorder import (
+    CANONICAL_13BUS_PMU_PLACEMENT,
+    PMUNoiseConfig,
+    PMURecorder,
+)
+from pmu_fsa.simulation.renewables import (
+    DEFAULT_DISPLACED_BUSES,
+    RenewablePenetrationConfig,
+    apply_renewable_displacement,
+    summarize_renewable_dispatch,
+)
+from pmu_fsa.simulation.scenario_generator import (
+    ScenarioGenerator,
+    export_raw_and_pmu_scenario,
+)
 from tests.e2e.conftest import (
-    np, HAS_NUMPY,
-    generate_synthetic_pmu_stream,
-    assert_valid_pmu_trajectory,
     IEEE39_GENERATOR_BUSES,
-    IEEE39_GEN_PARAMS,
-    IEEE39_BRANCHES,
-    AREA_1_BUSES,
-    AREA_2_BUSES,
-    AREA_3_BUSES,
+    assert_valid_pmu_trajectory,
 )
 
-try:
-    from pmu_fsa.simulation import ieee39_data
-    from pmu_fsa.simulation import dynamic_engine
-    from pmu_fsa.simulation import renewables
-    from pmu_fsa.simulation import pmu_recorder
-    from pmu_fsa.simulation import scenario_generator
-    HAS_SIM_MODULES = True
-except ImportError:
-    HAS_SIM_MODULES = False
 
-
-def test_f1_bus_topology_and_count(ieee39_topology):
+def test_f1_bus_topology_and_50hz_nominal_standard(ieee39_topology):
     topo = ieee39_topology
-    assert topo["n_buses"] == 39, f"Expected 39 buses, got {topo['n_buses']}"
-    assert topo["base_mva"] == 100.0, f"Expected 100.0 MVA base, got {topo['base_mva']}"
-    assert topo["nominal_freq"] == 60.0, f"Expected 60.0 Hz nominal frequency, got {topo['nominal_freq']}"
+    assert topo["n_buses"] == 39
+    assert topo["base_mva"] == 100.0
+    assert topo["nominal_freq"] == 50.0
+    assert NOMINAL_FREQ == 50.0
+    assert SECURITY_THRESHOLD_HZ == 49.50
+    assert PHYSICAL_FREQ_BOUNDS == (45.0, 50.5)
+    assert len(get_ieee39_bus_data()) == 39
 
-    if HAS_SIM_MODULES and hasattr(ieee39_data, "get_ieee39_bus_data"):
-        data = ieee39_data.get_ieee39_bus_data()
-        assert len(data) == 39, f"get_ieee39_bus_data returned {len(data)} buses"
 
+def test_f1_generator_parameters_and_intertie_modes(ieee39_topology):
+    gen_regional = {g["bus"]: g for g in get_ieee39_gen_data(macro_intertie=False)}
+    gen_macro = {g["bus"]: g for g in get_ieee39_gen_data(macro_intertie=True)}
+    assert len(gen_regional) == 10 and len(gen_macro) == 10
 
-def test_f1_generator_parameters(ieee39_topology):
-    topo = ieee39_topology
-    assert topo["n_generators"] == 10, f"Expected 10 generators, got {topo['n_generators']}"
-    assert len(topo["generator_buses"]) == 10, "Generator bus count mismatch"
+    assert gen_regional[39]["H"] == pytest.approx(42.0)
+    assert gen_regional[39]["Xdp"] == pytest.approx(0.0400)
+    assert gen_macro[39]["H"] == pytest.approx(500.0)
+    assert gen_macro[39]["Xdp"] == pytest.approx(0.0060)
 
-    gen_params = topo["generator_params"]
-    assert len(gen_params) == 10, "Generator parameters dictionary must contain 10 units"
-
-    for bus_id in topo["generator_buses"]:
-        assert bus_id in gen_params, f"Generator bus {bus_id} missing from gen_params"
-        gp = gen_params[bus_id]
-        assert gp["P0_mw"] > 0, f"Generator {bus_id} active power must be positive"
-        assert gp["H"] >= 20.0, f"Generator {bus_id} inertia H must be >= 20.0s, got {gp['H']}"
-        assert gp["D"] >= 0.0, f"Generator {bus_id} damping D must be >= 0"
-        assert gp["Xdp"] > 0.0, f"Generator {bus_id} transient reactance X'd must be positive"
-        assert gp["R"] == 0.05, f"Generator {bus_id} droop R must be canonical 5% (0.05)"
-        assert gp["Tg"] > 0.0, f"Generator {bus_id} governor time constant Tg must be positive"
+    for bus_id, gp in gen_regional.items():
+        assert bus_id in GENERATOR_BUSES
+        assert gp["P_mw"] > 0.0
+        assert gp["S_mva"] > gp["P_mw"]
+        assert gp["H"] >= 24.0
+        assert gp["D"] >= 0.0
+        assert gp["Xdp"] > 0.0
+        assert gp["R"] == pytest.approx(0.05)
+        assert gp["R_sys_pu"] == pytest.approx(gp["R"] * (BASE_MVA / gp["S_mva"]))
+        assert gp["Tg"] == pytest.approx(4.20)
 
 
 def test_f1_branch_connectivity_and_reactances(ieee39_topology):
-    topo = ieee39_topology
-    branches = topo["branches"]
-    assert len(branches) == 46, f"Expected 46 branches in IEEE 39-bus system, got {len(branches)}"
+    branches = ieee39_topology["branches"]
+    assert len(branches) == 46
 
     adj = {i: set() for i in range(1, 40)}
-    for from_b, to_b, r, x, b in branches:
-        assert 1 <= from_b <= 39, f"Invalid from_bus: {from_b}"
-        assert 1 <= to_b <= 39, f"Invalid to_bus: {to_b}"
-        assert x > 0.0, f"Branch ({from_b}, {to_b}) reactance X must be strictly positive, got {x}"
+    for from_b, to_b, _r, x, _b in branches:
+        assert 1 <= from_b <= 39 and 1 <= to_b <= 39
+        assert x > 0.0
         adj[from_b].add(to_b)
         adj[to_b].add(from_b)
 
@@ -76,346 +95,211 @@ def test_f1_branch_connectivity_and_reactances(ieee39_topology):
         node = queue.pop(0)
         if node not in visited:
             visited.add(node)
-            for neighbor in adj[node]:
-                if neighbor not in visited:
-                    queue.append(neighbor)
-
-    assert len(visited) == 39, f"Network graph is partitioned! Visited only {len(visited)} of 39 buses."
+            queue.extend(nb for nb in adj[node] if nb not in visited)
+    assert len(visited) == 39
 
 
 def test_f1_three_area_partitioning(ieee39_topology):
-    topo = ieee39_topology
-    areas = topo["area_partition"]
-    assert len(areas) == 3, f"Expected 3 coherent areas, got {len(areas)}"
+    areas = ieee39_topology["area_partition"]
+    area1, area2, area3 = set(areas["Area 1"]), set(areas["Area 2"]), set(areas["Area 3"])
+    assert area1.isdisjoint(area2) and area1.isdisjoint(area3) and area2.isdisjoint(area3)
+    assert (area1 | area2 | area3) == set(range(1, 40))
+
+    branch_pairs = {(min(fb, tb), max(fb, tb)) for fb, tb, *_ in ieee39_topology["branches"]}
+    assert {(4, 5), (1, 39), (16, 17)}.issubset(branch_pairs)
+
 
-    area1 = set(areas["Area 1"])
-    area2 = set(areas["Area 2"])
-    area3 = set(areas["Area 3"])
-
-    assert area1.isdisjoint(area2), "Area 1 and Area 2 have overlapping buses!"
-    assert area1.isdisjoint(area3), "Area 1 and Area 3 have overlapping buses!"
-    assert area2.isdisjoint(area3), "Area 2 and Area 3 have overlapping buses!"
-
-    all_partition_buses = area1 | area2 | area3
-    assert len(all_partition_buses) == 39, f"Partition covers {len(all_partition_buses)} buses, expected 39"
-    assert all_partition_buses == set(range(1, 40)), "Partition does not match {1, ..., 39}"
-
-    # Tie-lines 4-5 (Area 1-2) and 1-39 (Area 1-3)
-    branch_pairs = {(min(fb, tb), max(fb, tb)) for fb, tb, r, x, b in topo["branches"]}
-    assert (4, 5) in branch_pairs, "Key tie-line 4-5 connecting Area 1 and 2 is missing"
-    assert (1, 39) in branch_pairs, "Key tie-line 1-39 connecting Area 1 and 3 is missing"
-
-
-def test_f1_base_power_flow_balance(ieee39_topology):
-    topo = ieee39_topology
-    total_gen_mw = sum(g["P0_mw"] for g in topo["generator_params"].values())
-    # MATPOWER case39 / Pai base totals: ~6192.8 MW generation, ~6150.1 MW load
-    assert abs(total_gen_mw - 6192.8) < 5.0, f"Expected ~6192.8 MW generation, got {total_gen_mw}"
-
-    base_load_mw = 6150.1
-    assert total_gen_mw > base_load_mw, f"Total generation ({total_gen_mw}) must exceed load ({base_load_mw})"
-    losses = total_gen_mw - base_load_mw
-    assert 20.0 <= losses <= 80.0, f"Transmission losses ({losses} MW) outside realistic bounds [20, 80] MW"
-
-
-def test_f2_kron_admittance_matrix_properties(ieee39_topology):
-    if HAS_SIM_MODULES and hasattr(dynamic_engine, "compute_kron_reduction"):
-        y_red = dynamic_engine.compute_kron_reduction()
-        assert y_red.shape == (10, 10), f"Expected (10, 10) Kron reduced matrix, got {y_red.shape}"
-    else:
-        n_gen = ieee39_topology["n_generators"]
-        assert n_gen == 10
-        G_diag_min = 0.05
-        assert G_diag_min > 0.0, "Kron reduced diagonal conductance must be positive"
-
-
-def test_f2_swing_equation_steady_state_equilibrium():
-    omega_0 = 2.0 * math.pi * 60.0
-    delta_omega = 0.0
-    P_m = 650.0
-    P_e = 650.0
-    D = 2.0
-    H = 35.8
-
-    d_delta = omega_0 * delta_omega
-    d_delta_omega = (P_m - P_e - D * delta_omega) / (2.0 * H)
-
-    assert d_delta == 0.0, f"d(delta)/dt must be 0 at steady state, got {d_delta}"
-    assert d_delta_omega == 0.0, f"d(delta_omega)/dt must be 0 at steady state, got {d_delta_omega}"
-
-
-def test_f2_step_disturbance_frequency_nadir_trajectory(sample_pmu_trajectory):
-    traj = sample_pmu_trajectory
-    assert_valid_pmu_trajectory(traj)
-
-    ts = traj["timestamps"]
-    coi = traj["coi_frequency"]
-    t_disturb = traj["metadata"]["t_disturb"]
-
-    pre_indices = [i for i, t in enumerate(ts) if t < t_disturb]
-    for idx in pre_indices:
-        assert abs(coi[idx] - 60.0) < 0.01, f"Pre-disturbance frequency unstable: {coi[idx]} Hz"
-
-    post_indices = [i for i, t in enumerate(ts) if t >= t_disturb]
-    f_post = [coi[i] for i in post_indices]
-    f_min = min(f_post)
-    f_end = f_post[-1]
-
-    assert f_min < 59.9, f"Frequency did not drop post disturbance: min={f_min}"
-    assert f_min >= 55.0, f"Frequency dropped below physical threshold: min={f_min}"
-
-    nadir_idx = f_post.index(f_min)
-    assert nadir_idx < len(f_post) - 1, "Nadir occurred at last sample (no frequency stabilization)"
-
-
-def test_f2_tgov1_governor_action():
-    P_m0 = 500.0
-    R = 0.05
-    Tg = 0.5
-    dt = 0.02
-
-    # 59.4 Hz -> -0.01 p.u. speed deviation -> +0.2 p.u. droop demand
-    delta_omega = -0.01
-    governor_demand = -(1.0 / R) * delta_omega
-
-    P_m = P_m0
-    for _ in range(100):
-        dP_m = ((P_m0 + governor_demand * P_m0) - P_m) / Tg
-        P_m += dP_m * dt
-
-    assert P_m > P_m0, f"Governor failed to increase power: Pm={P_m} <= Pm0={P_m0}"
-    assert P_m >= P_m0 * 1.15, f"Governor output too small: Pm={P_m}"
-
-
-def test_f2_swing_equation_initial_acceleration_bound(sample_pmu_trajectory):
-    traj = sample_pmu_trajectory
-    t_disturb = traj["metadata"]["t_disturb"]
-    ts = traj["timestamps"]
-    coi = traj["coi_frequency"]
-
-    idx_0 = 0
-    for i, t in enumerate(ts):
-        if t >= t_disturb:
-            idx_0 = i
-            break
-
-    idx_end = idx_0
-    for i, t in enumerate(ts):
-        if t >= t_disturb + 0.1:
-            idx_end = i
-            break
-
-    dt = ts[idx_end] - ts[idx_0]
-    initial_rocof = (coi[idx_end] - coi[idx_0]) / dt
-
-    assert initial_rocof < 0.0, f"Initial ROCOF must be negative, got {initial_rocof}"
-    assert -5.0 <= initial_rocof <= -0.01, f"Initial ROCOF {initial_rocof} Hz/s outside realistic range"
-
-
-def test_f3_renewable_capacity_displacement(ieee39_topology):
-    topo = ieee39_topology
-    base_gen_mw = sum(g["P0_mw"] for g in topo["generator_params"].values())
-
-    renewable_penetration = 0.30
-    ren_mw = base_gen_mw * renewable_penetration
-    syn_mw = base_gen_mw * (1.0 - renewable_penetration)
-
-    assert abs((ren_mw + syn_mw) - base_gen_mw) < 1e-6, "Total generation capacity altered by renewable integration"
-    assert ren_mw > 0.0, "Renewable capacity must be positive"
-
-
-def test_f3_effective_inertia_monotonic_decrease(ieee39_topology):
-    base_H = sum(g["H"] for g in ieee39_topology["generator_params"].values())
-    ibr_H = 0.0
-
-    penetrations = [0.0, 0.10, 0.20, 0.30, 0.40, 0.50]
-    effective_H_values = []
-
-    for gamma in penetrations:
-        H_eff = (1.0 - gamma) * base_H + gamma * ibr_H
-        effective_H_values.append(H_eff)
-
-    for i in range(len(effective_H_values) - 1):
-        assert effective_H_values[i] > effective_H_values[i + 1], \
-            f"H_eff not monotonically decreasing: {effective_H_values[i]} <= {effective_H_values[i+1]}"
-
-    assert abs(effective_H_values[-1] - 0.5 * base_H) < 1e-6, "50% displacement did not yield 50% inertia"
-
-
-def test_f3_nadir_depth_dependency_on_penetration(synthetic_scenario_batch):
-    batch = synthetic_scenario_batch
-    scen_low_ren = [s for s in batch if s["metadata"]["renewable_penetration"] <= 0.15][0]
-    scen_high_ren = [s for s in batch if s["metadata"]["renewable_penetration"] >= 0.45][0]
-
-    nadir_low = scen_low_ren["metadata"]["ground_truth_nadir"]
-    nadir_high = scen_high_ren["metadata"]["ground_truth_nadir"]
-
-    assert nadir_high < nadir_low, \
-        f"Expected deeper nadir under high renewable penetration, got {nadir_high} >= {nadir_low}"
-
-
-def test_f3_rocof_steepness_dependency_on_inertia():
-    loss_mw = 600.0
-    f0 = 60.0
-    H_high = 350.0
-    H_low = 175.0
-
-    rocof_high = -(f0 * loss_mw) / (2.0 * H_high * 100.0)
-    rocof_low = -(f0 * loss_mw) / (2.0 * H_low * 100.0)
-
-    assert abs(rocof_low) > abs(rocof_high), "Low inertia ROCOF magnitude must be strictly greater than high inertia"
-    assert abs(abs(rocof_low) - 2.0 * abs(rocof_high)) < 1e-6, "ROCOF did not scale inversely with inertia"
-
-
-def test_f3_virtual_inertia_support_mitigation():
-    base_H = 300.0
-    gamma = 0.40
-
-    H_eff_no_support = (1.0 - gamma) * base_H + gamma * 0.0
-
-    H_ibr_virtual = 4.0
-    H_eff_with_support = (1.0 - gamma) * base_H + gamma * H_ibr_virtual
-
-    assert H_eff_with_support > H_eff_no_support, "Virtual inertia failed to increase effective system inertia"
-    delta_f_no = -600.0 / (2.0 * H_eff_no_support)
-    delta_f_with = -600.0 / (2.0 * H_eff_with_support)
-    assert abs(delta_f_with) < abs(delta_f_no), "Virtual inertia did not mitigate frequency drop"
-
-
-def test_f4_reporting_rate_50_and_60_fps():
-    stream_50 = generate_synthetic_pmu_stream(n_samples=201, fps=50)
-    ts_50 = stream_50["timestamps"]
-    dt_50 = ts_50[1] - ts_50[0]
-    assert abs(dt_50 - 0.02) < 1e-4, f"Expected 0.02s interval for 50 fps, got {dt_50}"
-    assert len(ts_50) == 201, f"Expected 201 samples, got {len(ts_50)}"
-
-    stream_60 = generate_synthetic_pmu_stream(n_samples=241, fps=60)
-    ts_60 = stream_60["timestamps"]
-    dt_60 = ts_60[1] - ts_60[0]
-    assert abs(dt_60 - (1.0 / 60.0)) < 1e-4, f"Expected {1/60:.5f}s interval for 60 fps, got {dt_60}"
-    assert len(ts_60) == 241, f"Expected 241 samples, got {len(ts_60)}"
-
-
-def test_f4_synchrophasor_fields_and_dimensions(sample_pmu_trajectory):
-    traj = sample_pmu_trajectory
-    assert_valid_pmu_trajectory(traj, n_buses=39, f_nominal=60.0)
-
-    assert traj["bus_frequencies"].shape[1] == 39
-    assert traj["bus_rocof"].shape[1] == 39
-    assert traj["voltage_magnitudes"].shape[1] == 39
-    assert traj["voltage_angles"].shape[1] == 39
-
-
-def test_f4_phase_angle_bounds_and_continuity(sample_pmu_trajectory):
-    traj = sample_pmu_trajectory
-    vm = traj["voltage_magnitudes"]
-    va = traj["voltage_angles"]
-
-    min_v = np.min(vm)
-    max_v = np.max(vm)
-    assert min_v >= 0.80, f"Voltage magnitude too low: {min_v} p.u."
-    assert max_v <= 1.25, f"Voltage magnitude too high: {max_v} p.u."
-
-    angle_row_0 = va[0]
-    for b in range(len(angle_row_0) - 1):
-        diff = abs(angle_row_0[b + 1] - angle_row_0[b])
-        assert diff < math.pi, f"Adjacent bus angle difference too large: {diff} rad"
-
-
-def test_f4_gaussian_noise_injection_model():
-    sigma_f = 0.03
-    noisy_stream = generate_synthetic_pmu_stream(
-        n_samples=500,
-        fps=50,
-        noise_std=sigma_f,
-        seed=777
+def test_f1_nr_power_flow_equilibrium_and_power_balance():
+    V0, p_gen_mw, q_gen_mvar, diag = solve_power_flow(load_scaling=1.0)
+    assert diag["converged"] is True
+    assert diag["max_mismatch_pu"] < 1e-10
+    assert V0.shape == (39,)
+    assert len(p_gen_mw) == 10 and len(q_gen_mvar) == 10
+    assert np.all((np.abs(V0) >= 0.90) & (np.abs(V0) <= 1.12))
+    assert diag["total_gen_mw"] > diag["total_load_mw"]
+    assert 20.0 <= diag["losses_mw"] <= 80.0
+
+
+def test_f2_kron_admittance_and_50hz_steady_state_equilibrium():
+    Y_red, K, E_mag0, delta0, Pm0 = compute_kron_reduction(load_scaling=1.0, return_all=True)
+    assert Y_red.shape == (10, 10) and K.shape == (39, 10)
+    assert len(E_mag0) == len(delta0) == len(Pm0) == 10
+
+    sim = DynamicSimulator(load_scaling=1.0)
+    assert sim.f_nominal == 50.0
+    assert sim.omega_0 == pytest.approx(2.0 * math.pi * 50.0)
+
+    out_flat = sim.simulate(t_span=(0.0, 3.0), t_disturb=1.0, tripped_bus=None, p_loss_mw=0.0, fps=50)
+    assert float(np.max(np.abs(out_flat["bus_frequencies"] - 50.0))) < 1e-9
+    assert float(np.max(np.abs(out_flat["generator_speeds"]))) < 1e-11
+    assert out_flat["metadata"]["ground_truth_nadir"] == pytest.approx(50.0, abs=1e-9)
+    assert out_flat["metadata"]["is_secure"] == 1
+
+
+def test_f2_complete_generator_disconnection_and_partial_loss_scaling():
+    sim = DynamicSimulator(load_scaling=1.0)
+    out_full = sim.simulate(t_span=(0.0, 7.0), t_disturb=1.0, tripped_bus=35, loss_fraction=1.0, fps=50)
+    out_part = sim.simulate(t_span=(0.0, 7.0), t_disturb=1.0, tripped_bus=35, loss_fraction=0.5, fps=50)
+
+    ts = out_full["timestamps"]
+    post_mask = ts >= 1.0
+    trip_idx = list(sim.gen_buses).index(35)
+
+    assert float(np.max(np.abs(out_full["generator_electrical_powers"][post_mask, trip_idx]))) == 0.0
+    assert float(np.max(np.abs(out_full["generator_powers"][post_mask, trip_idx]))) == 0.0
+    assert out_full["metadata"]["effective_H_post"] == pytest.approx(sim.H_tot - sim.H[trip_idx])
+
+    assert float(np.min(np.abs(out_part["generator_powers"][post_mask, trip_idx]))) > 1.0
+    assert out_full["metadata"]["ground_truth_nadir"] < out_part["metadata"]["ground_truth_nadir"] < 50.0
+    assert out_full["metadata"]["ground_truth_t_nadir"] < ts[-1]
+
+
+def test_f2_tgov1_governor_and_initial_swing_rocof():
+    sim_gov = DynamicSimulator(load_scaling=1.0)
+    sim_nogov = DynamicSimulator(load_scaling=1.0)
+    sim_nogov.R[:] = 1e9
+
+    out_gov = sim_gov.simulate(t_span=(0.0, 8.0), t_disturb=1.0, tripped_bus=38, loss_fraction=1.0, fps=50)
+    out_nogov = sim_nogov.simulate(t_span=(0.0, 8.0), t_disturb=1.0, tripped_bus=38, loss_fraction=1.0, fps=50)
+    assert out_gov["metadata"]["ground_truth_nadir"] > out_nogov["metadata"]["ground_truth_nadir"] + 0.15
+
+    loss_pu = out_gov["metadata"]["active_loss_pu"]
+    h_post = out_gov["metadata"]["effective_H_post"]
+    rocof_analytical = -50.0 * loss_pu / (2.0 * h_post)
+
+    ts = out_gov["timestamps"]
+    coi = out_gov["coi_frequency"]
+    idx0 = int(np.searchsorted(ts, 1.0))
+    obs_rocof = float((coi[idx0 + 1] - coi[idx0]) / (ts[idx0 + 1] - ts[idx0]))
+    assert abs(obs_rocof - rocof_analytical) / abs(rocof_analytical) < 0.03
+
+
+def test_f3_linear_renewable_displacement_without_saturation():
+    assert len(DEFAULT_DISPLACED_BUSES) == 9
+    assert 31 not in DEFAULT_DISPLACED_BUSES
+
+    gen_base = get_ieee39_gen_data(macro_intertie=False)
+    realized = []
+    inertias = []
+    for p_req in (0.10, 0.20, 0.30, 0.40, 0.50):
+        cfg = RenewablePenetrationConfig(p_ren=p_req, h_vir=0.0)
+        mod_gens = apply_renewable_displacement(gen_base, cfg)
+        summary = summarize_renewable_dispatch(mod_gens)
+        assert summary["p_ren_realized"] == pytest.approx(p_req, rel=0.01)
+        realized.append(summary["p_ren_realized"])
+        inertias.append(summary["h_eff_total"])
+
+    for i in range(len(inertias) - 1):
+        assert realized[i] < realized[i + 1]
+        assert inertias[i] > inertias[i + 1]
+    assert realized[-1] / realized[0] == pytest.approx(5.0, rel=1e-6)
+
+
+def test_f3_renewable_penetration_deepens_50hz_nadir_and_virtual_inertia_mitigates():
+    sim_low = DynamicSimulator(renewable_config=RenewablePenetrationConfig(p_ren=0.10))
+    sim_high = DynamicSimulator(renewable_config=RenewablePenetrationConfig(p_ren=0.50, h_vir=0.0))
+    sim_vi = DynamicSimulator(renewable_config=RenewablePenetrationConfig(p_ren=0.50, h_vir=5.0))
+
+    out_low = sim_low.simulate(t_span=(0.0, 7.0), t_disturb=1.0, tripped_bus=35, loss_fraction=1.0, fps=50)
+    out_high = sim_high.simulate(t_span=(0.0, 7.0), t_disturb=1.0, tripped_bus=35, loss_fraction=1.0, fps=50)
+    out_vi = sim_vi.simulate(t_span=(0.0, 7.0), t_disturb=1.0, tripped_bus=35, loss_fraction=1.0, fps=50)
+
+    assert out_high["metadata"]["ground_truth_nadir"] < out_low["metadata"]["ground_truth_nadir"]
+    assert out_vi["metadata"]["ground_truth_nadir"] > out_high["metadata"]["ground_truth_nadir"]
+
+
+def test_f4_pmu_recorder_sampling_rates_soc_fracsec_noise_and_c37_118(real_pmu_trajectory):
+    sim = DynamicSimulator(load_scaling=1.0)
+    raw = sim.simulate(t_span=(0.0, 4.0), t_disturb=1.0, tripped_bus=35, loss_fraction=1.0, fps=100)
+
+    for fps in (25, 50):
+        noise_cfg = PMUNoiseConfig(sigma_f=0.005, sigma_v=0.0005, sigma_theta_deg=0.05, seed=42)
+        rec = PMURecorder(fps=fps, noise_config=noise_cfg, f_nominal=50.0)
+        s_clean = rec.record_trajectory(raw, inject_noise=False)
+        s_noisy_1 = rec.record_trajectory(raw, inject_noise=True, seed_offset=7)
+        s_noisy_2 = rec.record_trajectory(raw, inject_noise=True, seed_offset=7)
+        s_noisy_3 = rec.record_trajectory(raw, inject_noise=True, seed_offset=8)
+
+        assert len(s_clean["timestamps"]) == 4 * fps + 1
+        assert s_clean["soc"].dtype == np.uint32
+        assert s_clean["fracsec"].dtype == np.uint32
+        np.testing.assert_array_equal(s_noisy_1["bus_frequencies"], s_noisy_2["bus_frequencies"])
+        assert not np.allclose(s_noisy_1["bus_frequencies"], s_noisy_3["bus_frequencies"])
+        assert not np.allclose(s_noisy_1["voltage_magnitudes"], s_clean["voltage_magnitudes"])
+        assert not np.allclose(s_noisy_1["voltage_angles"], s_clean["voltage_angles"])
+
+        frame_bytes = rec.serialize_frame(1, s_clean)
+        parsed = PMURecorder.parse_frame(frame_bytes, f_nominal=50.0)
+        assert parsed["crc_valid"] is True
+        assert parsed["n_phasors"] == 39
+        assert parsed["freq_hz"] == pytest.approx(float(s_clean["pmu_sys_frequency"][1]), abs=1e-4)
+
+    s_part = PMURecorder(fps=50, f_nominal=50.0).record_trajectory(
+        raw, inject_noise=False, observed_buses=CANONICAL_13BUS_PMU_PLACEMENT
     )
-    clean_stream = generate_synthetic_pmu_stream(
-        n_samples=500,
-        fps=50,
-        noise_std=0.0,
-        seed=777
-    )
+    obs_cols = ~np.all(np.isnan(s_part["bus_frequencies"]), axis=0)
+    assert int(np.sum(obs_cols)) == 13
 
-    f_noisy = noisy_stream["bus_frequencies"]
-    f_clean = clean_stream["bus_frequencies"]
-
-    diff = []
-    for r in range(len(f_noisy)):
-        for c in range(39):
-            diff.append(f_noisy[r][c] - f_clean[r][c])
-
-    mean_diff = sum(diff) / len(diff)
-    assert abs(mean_diff) < 0.005, f"Noise injected has non-zero mean: {mean_diff} Hz"
+    assert_valid_pmu_trajectory(real_pmu_trajectory, n_buses=39, f_nominal=50.0)
 
 
-def test_f4_c37_118_frame_integrity_and_schema(sample_pmu_trajectory):
-    traj = sample_pmu_trajectory
-    ts = traj["timestamps"]
-
-    for i in range(len(ts) - 1):
-        assert ts[i + 1] > ts[i], f"Timestamp monotonicity violated at index {i}: {ts[i]} >= {ts[i+1]}"
-
-    assert not np.isnan(traj["bus_frequencies"]).any()
-    assert not np.isinf(traj["bus_frequencies"]).any()
-    assert not np.isnan(traj["bus_rocof"]).any()
-
-
-def test_f5_generator_outage_matrix_coverage(synthetic_scenario_batch):
+def test_f5_scenario_batch_metadata_49_5hz_labeling_and_dataset_validator(
+    tmp_path: Path,
+    synthetic_scenario_batch,
+):
     batch = synthetic_scenario_batch
-    assert len(batch) >= 10, f"Expected at least 10 scenarios, got {len(batch)}"
-
-    disturbed_units = {s["metadata"]["disturbed_gen"] for s in batch}
-    assert len(disturbed_units) >= 5, f"Generator outage matrix has insufficient coverage: {disturbed_units}"
-
-    losses = [s["metadata"]["active_loss_mw"] for s in batch]
-    min_loss = min(losses)
-    max_loss = max(losses)
-    assert min_loss <= 300.0, f"Expected small unit outage <= 300 MW, min was {min_loss}"
-    assert max_loss >= 800.0, f"Expected large unit outage >= 800 MW, max was {max_loss}"
-
-
-def test_f5_load_regime_variations(synthetic_scenario_batch):
-    batch = synthetic_scenario_batch
-    ren_levels = [s["metadata"]["renewable_penetration"] for s in batch]
-
-    assert min(ren_levels) <= 0.15, "Batch does not cover low renewable penetration (<=15%)"
-    assert max(ren_levels) >= 0.45, "Batch does not cover high renewable penetration (>=45%)"
-
-
-def test_f5_scenario_partitioning_by_id(synthetic_scenario_batch):
-    batch = synthetic_scenario_batch
+    assert len(batch) == 20
     scenario_ids = [s["metadata"]["scenario_id"] for s in batch]
-    assert len(scenario_ids) == len(set(scenario_ids)), "Scenario IDs must be strictly unique"
+    assert len(scenario_ids) == len(set(scenario_ids))
 
-    n_train = int(len(batch) * 0.7)
-    train_ids = set(scenario_ids[:n_train])
-    test_ids = set(scenario_ids[n_train:])
-
-    assert train_ids.isdisjoint(test_ids), "Data leakage! Train and test scenario sets overlap"
-    assert len(train_ids | test_ids) == len(batch), "Partitioning lost scenarios"
-
-
-def test_f5_ground_truth_labeling_consistency(synthetic_scenario_batch):
-    batch = synthetic_scenario_batch
-    f_threshold = 59.5
-
-    for scen in batch:
-        nadir = scen["metadata"]["ground_truth_nadir"]
-        is_sec = scen["metadata"]["is_secure"]
-        expected_sec = 1 if nadir >= f_threshold else 0
-        assert is_sec == expected_sec, \
-            f"Scenario {scen['metadata']['scenario_id']} label mismatch: nadir={nadir}, is_secure={is_sec}, expected={expected_sec}"
-
-
-def test_f5_scenario_metadata_integrity(synthetic_scenario_batch):
-    batch = synthetic_scenario_batch
     for scen in batch:
         meta = scen["metadata"]
-        assert isinstance(meta["scenario_id"], str) and len(meta["scenario_id"]) > 0
         assert meta["disturbed_gen"] in IEEE39_GENERATOR_BUSES
-        assert meta["active_loss_mw"] > 0
-        assert 0.0 <= meta["renewable_penetration"] <= 1.0
-        assert meta["t_disturb"] > 0
-        assert 55.0 <= meta["ground_truth_nadir"] <= 60.5
-        assert meta["is_secure"] in (0, 1)
+        assert 45.0 <= meta["ground_truth_nadir"] <= 50.5
+        expected_sec = 1 if meta["ground_truth_nadir"] >= 49.50 else 0
+        assert meta["is_secure"] == expected_sec
+
+    gen = ScenarioGenerator(fps=50, t_span=(0.0, 6.0), seed=55)
+    pairs = gen.generate_scenario_batch(
+        gen_buses=[30, 35],
+        loss_fractions=[1.0, 0.40],
+        penetrations=[0.10, 0.40],
+        load_scales=[1.00, 1.20],
+        max_scenarios=6,
+        inject_noise=True,
+        return_raw=True,
+    )
+    raw_sim_dir = tmp_path / "raw_sim"
+    raw_pmu_dir = tmp_path / "raw_pmu"
+    proc_dir = tmp_path / "processed"
+    proc_dir.mkdir(parents=True, exist_ok=True)
+
+    pmu_list = []
+    for raw_t, pmu_t in pairs:
+        export_raw_and_pmu_scenario(raw_t, pmu_t, raw_sim_dir, raw_pmu_dir)
+        pmu_list.append(pmu_t)
+
+    ext = FeatureExtractor(f_nominal=50.0)
+    for w in (0.5, 1.0):
+        X_df, yn, ys, meta_df = ext.transform_batch(pmu_list, t_obs=w, as_dataframe=True)
+        np.savez_compressed(
+            proc_dir / f"features_t{w:.1f}s.npz",
+            X=X_df.to_numpy(dtype=np.float64),
+            y_nadir=yn,
+            y_secure=ys,
+            scenario_ids=meta_df["scenario_id"].to_numpy(dtype=str),
+            partitions=meta_df["partition"].to_numpy(dtype=str),
+            ood_types=meta_df["ood_type"].to_numpy(dtype=str),
+            feature_names=np.asarray(CANONICAL_FEATURE_NAMES, dtype=str),
+        )
+
+    val_res = validate_dataset(
+        raw_pmu_dir=raw_pmu_dir,
+        processed_dir=proc_dir,
+        windows=(0.5, 1.0),
+        f_nominal=50.0,
+        threshold=49.50,
+        raw_sim_dir=raw_sim_dir,
+        expected_n_scenarios=6,
+    )
+    assert val_res["all_passed"] is True, f"Failed checks: {[k for k, v in val_res['checks'].items() if not v['passed']]}"

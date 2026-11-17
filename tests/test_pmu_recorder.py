@@ -1,152 +1,231 @@
-"""Tests for the IEEE C37.118 PMU measurement recorder."""
+"""Tests for the 50 Hz IEEE C37.118 PMU measurement recorder and causal ROCOF."""
 
-import math
+from __future__ import annotations
+
+import struct
 import numpy as np
 import pytest
 
-from pmu_fsa.simulation.pmu_recorder import (
-    PMURecorder,
-    PMUNoiseConfig,
-    apply_pmu_measurement_noise,
-    compute_tve,
-    compute_fir_rocof,
-    compute_crc_ccitt,
-)
 from pmu_fsa.simulation.dynamic_engine import DynamicSimulator
+from pmu_fsa.simulation.pmu_recorder import (
+    CANONICAL_13BUS_PMU_PLACEMENT,
+    PMUNoiseConfig,
+    PMURecorder,
+    apply_pmu_measurement_noise,
+    compute_causal_rocof,
+    compute_crc_ccitt,
+    compute_fir_rocof,
+    compute_tve,
+    estimate_pmu_system_frequency,
+)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def clean_simulation_trajectory():
     sim = DynamicSimulator(load_scaling=1.0)
     return sim.simulate(
         t_span=(0.0, 3.0),
         t_disturb=1.0,
         tripped_bus=35,
-        p_loss_mw=650.0,
+        loss_fraction=1.0,
         fps=100,
     )
 
 
-def test_sampling_rate_verification(clean_simulation_trajectory):
+def test_sampling_rates_25_50_60_fps_and_invalid_rejection(clean_simulation_trajectory):
     raw_traj = clean_simulation_trajectory
 
-    rec50 = PMURecorder(fps=50)
-    stream50 = rec50.record_trajectory(raw_traj)
-    t50 = stream50["timestamps"]
-    diffs50 = np.diff(t50)
-    expected_dt50 = 1.0 / 50.0
+    for fps in (25, 50, 60):
+        rec = PMURecorder(fps=fps, f_nominal=50.0)
+        stream = rec.record_trajectory(raw_traj)
+        ts = stream["timestamps"]
+        diffs = np.diff(ts)
+        expected_dt = 1.0 / float(fps)
+        assert np.allclose(diffs, expected_dt, atol=1e-8)
+        assert len(ts) == int(round(3.0 * fps)) + 1
+        assert stream["metadata"]["fps"] == fps
+        assert stream["bus_frequencies"].shape == (len(ts), 39)
 
-    assert np.allclose(diffs50, expected_dt50, atol=1e-8), (
-        f"50 fps sampling delta mismatch: max error = {np.max(np.abs(diffs50 - expected_dt50))}"
-    )
-    assert len(t50) == int(round(3.0 * 50)) + 1
-    assert stream50["metadata"]["fps"] == 50
-
-    rec60 = PMURecorder(fps=60)
-    stream60 = rec60.record_trajectory(raw_traj)
-    t60 = stream60["timestamps"]
-    diffs60 = np.diff(t60)
-    expected_dt60 = 1.0 / 60.0
-
-    assert np.allclose(diffs60, expected_dt60, atol=1e-8), (
-        f"60 fps sampling delta mismatch: max error = {np.max(np.abs(diffs60 - expected_dt60))}"
-    )
-    assert len(t60) == int(round(3.0 * 60)) + 1
-    assert stream60["metadata"]["fps"] == 60
+    for bad_fps in (-50, 0, 15, 45, 200):
+        with pytest.raises(ValueError, match="reporting rate must be"):
+            PMURecorder(fps=bad_fps)
 
 
-def test_ieee_c37_118_noise_and_error_limits(clean_simulation_trajectory):
+def test_soc_and_fracsec_timestamps(clean_simulation_trajectory):
+    base_epoch = 1700000000
+    for fps in (25, 50):
+        rec = PMURecorder(fps=fps, base_epoch_seconds=base_epoch, f_nominal=50.0)
+        stream = rec.record_trajectory(clean_simulation_trajectory)
+        soc = stream["soc"]
+        fracsec = stream["fracsec"]
+        assert soc.dtype == np.uint32
+        assert fracsec.dtype == np.uint32
+        reconstructed = (soc.astype(np.float64) - base_epoch) + (fracsec.astype(np.float64) / 1_000_000.0)
+        np.testing.assert_allclose(reconstructed, stream["timestamps"], atol=1e-6)
+
+
+def test_seeded_noise_injection_across_f_v_theta_and_tve(clean_simulation_trajectory):
     raw_traj = clean_simulation_trajectory
+
+    alias_cfg = PMUNoiseConfig(f_noise_std=0.004, seed=7)
+    assert alias_cfg.sigma_f == pytest.approx(0.004)
+
+    with pytest.raises(ValueError, match="non-negative"):
+        PMUNoiseConfig(sigma_f=-0.001)
 
     noise_cfg = PMUNoiseConfig(
-        sigma_f=0.003,
-        sigma_rocof=0.01,
-        sigma_v=0.0002,
-        sigma_theta_deg=0.03,
+        sigma_f=0.005,
+        sigma_rocof=0.02,
+        sigma_v=0.0005,
+        sigma_theta_deg=0.05,
         seed=123,
     )
-
-    rec = PMURecorder(fps=50, noise_config=noise_cfg)
+    rec = PMURecorder(fps=50, noise_config=noise_cfg, f_nominal=50.0)
     clean_stream = rec.record_trajectory(raw_traj, inject_noise=False)
-    noisy_stream = rec.record_trajectory(raw_traj, inject_noise=True)
+    noisy_a = rec.record_trajectory(raw_traj, inject_noise=True, seed_offset=0)
+    noisy_a_repeat = rec.record_trajectory(raw_traj, inject_noise=True, seed_offset=0)
+    noisy_b = rec.record_trajectory(raw_traj, inject_noise=True, seed_offset=1)
 
-    v_true = clean_stream["voltage_magnitudes"]
-    ang_true = clean_stream["voltage_angles"]
-    v_meas = noisy_stream["voltage_magnitudes"]
-    ang_meas = noisy_stream["voltage_angles"]
+    np.testing.assert_array_equal(noisy_a["bus_frequencies"], noisy_a_repeat["bus_frequencies"])
+    np.testing.assert_array_equal(noisy_a["voltage_magnitudes"], noisy_a_repeat["voltage_magnitudes"])
+    np.testing.assert_array_equal(noisy_a["voltage_angles"], noisy_a_repeat["voltage_angles"])
 
-    tve = compute_tve(v_true, ang_true, v_meas, ang_meas)
+    assert not np.allclose(noisy_a["bus_frequencies"], noisy_b["bus_frequencies"])
+    assert not np.allclose(noisy_a["voltage_magnitudes"], noisy_b["voltage_magnitudes"])
+    assert not np.allclose(noisy_a["voltage_angles"], noisy_b["voltage_angles"])
 
-    mean_tve = np.mean(tve)
-    max_tve = np.max(tve)
-    p99_tve = np.percentile(tve, 99)
+    f_err = noisy_a["bus_frequencies"] - clean_stream["bus_frequencies"]
+    emp_sigma_f = float(np.std(f_err))
+    assert emp_sigma_f == pytest.approx(0.005, rel=0.08)
 
-    assert p99_tve < 0.010, f"99th percentile TVE ({p99_tve * 100:.3f}%) exceeds IEEE C37.118 1.0% limit"
-    assert mean_tve < 0.005, f"Mean TVE ({mean_tve * 100:.3f}%) too high"
-
-    f_true = clean_stream["bus_frequencies"]
-    f_meas = noisy_stream["bus_frequencies"]
-    fe = np.abs(f_meas - f_true)
-
-    mean_fe = np.mean(fe)
-    p95_fe = np.percentile(fe, 95)
-    assert mean_fe < 0.005, f"Mean Frequency Error ({mean_fe:.4f} Hz) exceeds 0.005 Hz"
-
-
-def test_binary_frame_serialization_and_crc(clean_simulation_trajectory):
-    rec = PMURecorder(fps=50, id_code=42)
-    pmu_stream = rec.record_trajectory(clean_simulation_trajectory)
-
-    for frame_idx in [0, 10, 50, len(pmu_stream["timestamps"]) - 1]:
-        frame_bytes = rec.serialize_frame(frame_idx, pmu_stream)
-
-        assert len(frame_bytes) >= 16, "Serialized frame is shorter than header"
-        # 39 * 8 (phasors) + 8 (freq/rocof) + 16 (header) + 2 (crc) = 338 bytes
-        assert len(frame_bytes) == 338, f"Expected 338 bytes for 39-bus frame, got {len(frame_bytes)}"
-
-        parsed = PMURecorder.parse_frame(frame_bytes)
-        assert parsed["sync"] == 0xAA01, f"Invalid SYNC: {hex(parsed['sync'])}"
-        assert parsed["frame_size"] == len(frame_bytes), "FRAMESIZE field mismatch"
-        assert parsed["id_code"] == 42, f"IDCODE mismatch: {parsed['id_code']}"
-        assert parsed["n_phasors"] == 39, f"Phasor count mismatch: {parsed['n_phasors']}"
-        assert parsed["crc_valid"] is True, "CRC validation failed"
-
-        expected_soc = int(pmu_stream["soc"][frame_idx])
-        expected_fracsec = int(pmu_stream["fracsec"][frame_idx])
-        assert parsed["soc"] == expected_soc
-        assert parsed["fracsec"] == expected_fracsec
-
-        expected_f = float(pmu_stream["coi_frequency"][frame_idx])
-        assert abs(parsed["freq_hz"] - expected_f) < 1e-4
-
-        corrupted_bytes = bytearray(frame_bytes)
-        corrupted_bytes[10] ^= 0xFF
-        with pytest.raises(ValueError, match="CRC-CCITT mismatch"):
-            PMURecorder.parse_frame(bytes(corrupted_bytes))
+    tve = compute_tve(
+        clean_stream["voltage_magnitudes"],
+        clean_stream["voltage_angles"],
+        noisy_a["voltage_magnitudes"],
+        noisy_a["voltage_angles"],
+    )
+    assert float(np.percentile(tve, 99)) < 0.010
+    assert float(np.mean(tve)) < 0.005
+    assert np.all((noisy_a["voltage_angles"] >= -180.0) & (noisy_a["voltage_angles"] < 180.0))
 
 
-def test_fir_filter_noise_resilient_rocof():
+def test_wrap_safe_angle_interpolation_and_partial_pmu_masking(clean_simulation_trajectory):
+    synth = {
+        "timestamps": np.array([0.0, 0.04, 0.08]),
+        "bus_frequencies": np.full((3, 39), 50.0),
+        "voltage_magnitudes": np.ones((3, 39)),
+        "voltage_angles": np.tile(np.array([[179.0], [-179.0], [-177.0]]), (1, 39)),
+        "coi_frequency": np.array([999.0, 999.0, 999.0]),
+        "metadata": {"f_nominal": 50.0},
+    }
+    rec = PMURecorder(fps=50, f_nominal=50.0)
+    stream = rec.record_trajectory(synth)
+    # Midpoint between +179 deg and -179 deg must wrap near +/-180 deg, never 0 deg
+    mid_ang = float(stream["voltage_angles"][1, 0])
+    assert abs(abs(mid_ang) - 180.0) < 1e-6
+    # Wide-area PMU frequency must ignore poisoned raw coi_frequency=999.0
+    assert np.allclose(stream["pmu_sys_frequency"], 50.0)
+    assert np.allclose(stream["coi_frequency"], 50.0)
+
+    partial = rec.record_trajectory(
+        clean_simulation_trajectory,
+        inject_noise=False,
+        observed_buses=CANONICAL_13BUS_PMU_PLACEMENT,
+    )
+    obs_zero = {b - 1 for b in CANONICAL_13BUS_PMU_PLACEMENT}
+    for col in range(39):
+        if col in obs_zero:
+            assert np.all(np.isfinite(partial["bus_frequencies"][:, col]))
+        else:
+            assert np.all(np.isnan(partial["bus_frequencies"][:, col]))
+            assert np.all(np.isnan(partial["bus_rocof"][:, col]))
+            assert np.all(np.isnan(partial["voltage_magnitudes"][:, col]))
+            assert np.all(np.isnan(partial["voltage_angles"][:, col]))
+    assert np.all(np.isfinite(partial["pmu_sys_frequency"]))
+    assert len(partial["metadata"]["observed_buses"]) == 13
+
+
+def test_strictly_causal_5point_rocof_50hz():
     fps = 50.0
     dt = 1.0 / fps
     t = np.arange(0.0, 4.0, dt)
 
-    # f(t) = 60 - 0.5*t - 0.1*t^2  =>  df/dt = -0.5 - 0.2*t
-    f_clean = 60.0 - 0.5 * t - 0.1 * (t ** 2)
+    # 50 Hz ramp: exact slope recovery
+    slope = -0.75
+    f_ramp = 50.0 + slope * t
+    rocof_ramp = compute_causal_rocof(f_ramp, fps=fps, window_length=5)
+    assert rocof_ramp[0] == 0.0
+    assert rocof_ramp[1] == pytest.approx(slope, abs=1e-12)
+    assert np.allclose(rocof_ramp[1:], slope, atol=1e-12)
+
+    # Strict causality: corrupting future samples after index k never alters rocof[:k+1]
+    for cutoff in (1, 2, 4, 15, 50):
+        f_mut = f_ramp.copy()
+        f_mut[cutoff + 1 :] = np.nan
+        rocof_mut = compute_causal_rocof(f_mut, fps=fps, window_length=5)
+        np.testing.assert_array_equal(rocof_ramp[: cutoff + 1], rocof_mut[: cutoff + 1])
+
+    # Noise resilience vs 2-point gradient on 50 Hz quadratic signal
+    f_quad = 50.0 - 0.5 * t - 0.1 * (t ** 2)
     rocof_true = -0.5 - 0.2 * t
-
     rng = np.random.default_rng(999)
-    noise = rng.normal(0.0, 0.01, size=len(t))
-    f_noisy = f_clean + noise
+    f_noisy = f_quad + rng.normal(0.0, 0.01, size=len(t))
 
-    raw_rocof_noisy = np.gradient(f_noisy, dt)
-    fir_rocof = compute_fir_rocof(f_noisy, fps=fps, window_length=5)
-
-    fir_clean = compute_fir_rocof(f_clean, fps=fps, window_length=5)
+    raw_grad = np.gradient(f_noisy, dt)
+    causal_ols = compute_fir_rocof(f_noisy, fps=fps, window_length=5)
     interior = slice(5, -5)
-    max_clean_error = np.max(np.abs(fir_clean[interior] - rocof_true[interior]))
-    assert max_clean_error < 1e-3, f"FIR filter introduced distortion on clean signal: {max_clean_error}"
+    rmse_raw = float(np.sqrt(np.mean((raw_grad[interior] - rocof_true[interior]) ** 2)))
+    rmse_ols = float(np.sqrt(np.mean((causal_ols[interior] - rocof_true[interior]) ** 2)))
+    assert rmse_ols < rmse_raw
 
-    raw_rmse = np.sqrt(np.mean((raw_rocof_noisy[interior] - rocof_true[interior]) ** 2))
-    fir_rmse = np.sqrt(np.mean((fir_rocof[interior] - rocof_true[interior]) ** 2))
 
-    assert fir_rmse < raw_rmse, f"FIR filter failed to reduce ROCOF RMSE: fir={fir_rmse:.4f}, raw={raw_rmse:.4f}"
+def test_c37_118_2_frame_serialization_crc_and_error_handling(clean_simulation_trajectory):
+    rec = PMURecorder(fps=50, id_code=42, f_nominal=50.0)
+    pmu_stream = rec.record_trajectory(clean_simulation_trajectory)
+
+    for frame_idx in (0, 10, 50, len(pmu_stream["timestamps"]) - 1):
+        frame_bytes = rec.serialize_frame(frame_idx, pmu_stream)
+        assert len(frame_bytes) == 338
+
+        parsed = PMURecorder.parse_frame(frame_bytes, f_nominal=50.0)
+        assert parsed["sync"] == 0xAA01
+        assert parsed["frame_size"] == 338
+        assert parsed["id_code"] == 42
+        assert parsed["n_phasors"] == 39
+        assert parsed["crc_valid"] is True
+        assert parsed["soc"] == int(pmu_stream["soc"][frame_idx])
+        assert parsed["fracsec"] == int(pmu_stream["fracsec"][frame_idx])
+        assert parsed["freq_hz"] == pytest.approx(float(pmu_stream["pmu_sys_frequency"][frame_idx]), abs=1e-4)
+
+        corrupted = bytearray(frame_bytes)
+        corrupted[10] ^= 0xFF
+        with pytest.raises(ValueError, match="CRC-CCITT mismatch"):
+            PMURecorder.parse_frame(bytes(corrupted), f_nominal=50.0)
+
+    for short_len in (0, 8, 17):
+        with pytest.raises(ValueError, match="too short"):
+            PMURecorder.parse_frame(bytes(short_len), f_nominal=50.0)
+
+    header_only = struct.pack(">HHHIIH", 0xAA01, 18, 1, 1700000000, 0, 0)
+    crc = compute_crc_ccitt(header_only)
+    with pytest.raises(ValueError, match="Corrupted or truncated PMU frame"):
+        PMURecorder.parse_frame(header_only + struct.pack(">H", crc), f_nominal=50.0)
+
+    bad_sync_payload = struct.pack(">HHHIIHffff", 0xBB01, 34, 1, 1700000000, 0, 0, 1.0, 0.0, 0.0, 0.0)
+    bad_crc = compute_crc_ccitt(bad_sync_payload)
+    with pytest.raises(ValueError, match="Invalid SYNC word"):
+        PMURecorder.parse_frame(bad_sync_payload + struct.pack(">H", bad_crc), f_nominal=50.0)
+
+
+def test_apply_pmu_measurement_noise_and_system_freq_fallbacks():
+    bf = np.full((20, 39), 50.0)
+    br = np.zeros((20, 39))
+    vm = np.full((20, 39), 0.005)
+    va = np.zeros((20, 39))
+    cfg = PMUNoiseConfig(sigma_f=0.005, sigma_v=0.10, sigma_theta_deg=0.05, seed=11)
+    _, r_n, v_n, _ = apply_pmu_measurement_noise(bf, br, vm, va, noise_config=cfg, fps=50.0)
+    assert np.all(v_n >= 0.01)
+    assert np.all(np.isfinite(r_n))
+
+    all_nan_bf = np.full((5, 39), np.nan)
+    assert np.all(np.isnan(estimate_pmu_system_frequency(all_nan_bf)))
