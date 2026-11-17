@@ -415,3 +415,28 @@ def test_ood_regime_and_partition_rules():
 
     id_parts = {assign_scenario_partition(0.20, 1.00, f"scen_id_{k:03d}") for k in range(80)}
     assert id_parts == {"train", "val", "test"}
+
+
+def test_rhs_complete_trip_with_renewable_droop_zeros_fourth_state():
+    ren_cfg = RenewablePenetrationConfig(p_ren=0.30, enable_droop=True, r_ren=0.04, t_inv=0.05)
+    sim = DynamicSimulator(load_scaling=1.0, renewable_config=ren_cfg)
+    assert sim.has_ren_droop is True
+
+    m = sim.n_gen
+    state = np.zeros(4 * m, dtype=float)
+    state[:m] = sim.delta0
+    state[3 * m :] = 0.25  # Non-zero converter droop state prior to trip
+
+    trip_idx = 4
+    deriv = sim.rhs(2.0, state, t_disturb=1.0, trip_gen_idx=trip_idx, p_loss_mw=500.0, loss_fraction=1.0)
+    assert len(deriv) == 4 * m
+    assert np.all(np.isfinite(deriv))
+    assert deriv[trip_idx] == 0.0
+    assert deriv[m + trip_idx] == 0.0
+    assert deriv[2 * m + trip_idx] == 0.0
+    assert deriv[3 * m + trip_idx] == 0.0
+
+    traj = sim.simulate(t_span=(0.0, 4.0), t_disturb=1.0, tripped_bus=35, loss_fraction=1.0, fps=50)
+    assert traj["metadata"]["ground_truth_nadir"] < 50.0
+    assert np.all(np.isfinite(traj["coi_frequency"]))
+

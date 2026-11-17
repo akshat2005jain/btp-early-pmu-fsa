@@ -1,0 +1,9 @@
+| Category | Limitation |
+| --- | --- |
+| Simulation Physics | Classical constant-E' 3rd-order synchronous generator + first-order steam-reheat governor (R=5%, Tg=4.20 s) + Kron-reduced constant-impedance post-disturbance loads; omits AVR/PSS flux decay, boiler limits, and dynamic motor loads. |
+| Renewable Representation (Approach B) | Co-located constant-power GFL effective inertia, damping, and droop derating at unchanged bus active-power setpoints; omits explicit solar/wind park placement, line-flow redistribution, PLL dynamics, and current limiting. |
+| PMU Channel Model | Synthetic bus phasor sampling at 50 fps with Gaussian phasor noise and causal Butterworth filtering; excludes real PDC packet jitter, GPS phase jumps, CT/PT transients, and field utility PMU recordings. |
+| Dataset & Sample Size | 750 simulated contingencies on one 39-bus benchmark network; held-out ID test split has N=52 scenarios (statistical power limited for sub-5 mHz differences). |
+| Model Generalization & Noise | Validation-selected Ridge excels on smooth noiseless features (4.6 mHz ID MAE, 10.6 mHz OOD MAE) due to near-linear swing physics, whereas clean-trained models degrade substantially under unmitigated high-frequency PMU phasor noise unless regularized or noise-augmented. |
+| Calibration & Threshold | Post-hoc Platt/isotonic calibration operates on N_cal=218 OOF (or N_val=70 disjoint) scenarios; reliability bins have finite-sample variance on N=52 ID test cases. |
+| Computational Benchmarking | Desktop macOS user-space Python timing (time.perf_counter_ns); demonstrates sub-frame compute cost (<3 ms vs 20 ms 50-fps frame interval), not RTOS or hardware-in-the-loop relay certification. |

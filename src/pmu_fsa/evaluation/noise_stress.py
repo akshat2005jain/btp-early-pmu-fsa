@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from pmu_fsa.evaluation.sensitivity import split_scenarios_by_partition
+from pmu_fsa.evaluation.sensitivity import WindowSensitivityBenchmark, split_scenarios_by_partition
 from pmu_fsa.features.extractor import FeatureExtractor
 from pmu_fsa.models.calibrated_gb import CalibratedGBDTClassifier
 from pmu_fsa.models.calibration_metrics import (
@@ -119,11 +119,14 @@ class MeasurementNoiseBenchmark:
                 "partition_protocol": "empty",
             }
 
-        train_scens, val_scens, test_scens, _, protocol = split_scenarios_by_partition(
+        train_raw, val_raw, test_raw, _, protocol = split_scenarios_by_partition(
             scenarios, random_state=self.seed
         )
+        train_scens, _ = WindowSensitivityBenchmark.filter_causal_scenarios(train_raw, self.t_obs)
+        val_scens, _ = WindowSensitivityBenchmark.filter_causal_scenarios(val_raw, self.t_obs)
+        test_scens, _ = WindowSensitivityBenchmark.filter_causal_scenarios(test_raw, self.t_obs)
 
-        extractor = FeatureExtractor(t_obs=self.t_obs, f_nominal=self.f_nominal)
+        extractor = FeatureExtractor(t_obs=self.t_obs, f_nominal=self.f_nominal, strict_nadir=True)
 
         X_tr_df, y_tr_raw, _, _ = extractor.transform_batch(train_scens, t_obs=self.t_obs, as_dataframe=True)
         X_train = X_tr_df.values if hasattr(X_tr_df, "values") else np.asarray(X_tr_df, dtype=float)

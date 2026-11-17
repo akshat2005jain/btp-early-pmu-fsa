@@ -252,17 +252,17 @@ def build_html() -> str:
   <p class="sub">Plain-English Power Physics, 50.0 Hz Formulation (H<sub>39</sub> = 42.0 s), Verified 750-Scenario Results, Codebase Walkthrough &amp; Viva Q&amp;A</p>
   <div class="meta-grid">
     <div><strong>Mentor:</strong> Dr. Deepak Kumar Gupta</div>
-    <div><strong>Team Structure:</strong> 4 Final-Year B.Tech EE Members</div>
+    <div><strong>Team Members:</strong> Aditya Jha, Akshat Jain, Arshdeep Singh, Raj Bathla</div>
     <div><strong>Grid Standard:</strong> 50.0 Hz Nominal | 49.50 Hz Floor | 50 &amp; 25 fps PMU</div>
     <div><strong>Production Dataset:</strong> 750 Disjoint Scenarios (270 ID + 480 OOD)</div>
-    <div><strong>Dataset &amp; Test Verification:</strong> 14/14 Data Checks &amp; 232/232 Tests PASS (83 Unit + 149 E2E)</div>
-    <div><strong>Online Speedup:</strong> 2.38 ms Median vs. 125.38 ms ODE (52.7&times; Faster)</div>
+    <div><strong>Dataset &amp; Test Verification:</strong> 14/14 Data Checks &amp; Full Pytest + E2E Suites PASS</div>
+    <div><strong>Desktop Compute Speedup:</strong> ~2.53 ms Median vs. 161.17 ms ODE (Sub-20 ms 50-fps Frame)</div>
   </div>
 </div>
 
 <div class="callout">
   <strong>How to Read This Guide (Zero Prior Power-Systems or ML Calibration Background Needed):</strong>
-  Every concept begins with an intuitive physical explanation, connects to exact 50.0 Hz synchronous-grid equations (matching India's Central Electricity Authority / IEGC 50 Hz standard), maps directly to the Python modules inside <code>/Users/akshat/Desktop/btp-early-pmu-fsa</code>, and cites exact numbers from the verified 750-scenario experimental run.
+  Every concept begins with an intuitive physical explanation, connects to exact 50.0 Hz synchronous-grid equations (matching India's Central Electricity Authority / IEGC 50 Hz standard), maps directly to the Python modules inside <code>btp-early-pmu-fsa/</code>, and cites exact numbers from the verified 750-scenario experimental run.
 </div>
 
 <div class="kpi-row">
@@ -539,12 +539,12 @@ def build_html() -> str:
 
 <h2>6. Exact Reproduction Commands &amp; 4-Member Team Viva Split</h2>
 
-<pre>cd /Users/akshat/Desktop/btp-early-pmu-fsa
+<pre>cd btp-early-pmu-fsa
 
-# Single Master Command (Runs Simulation -> Extraction -> Validation -> Training -> Benchmarks -> 13 Figures)
+# Single Master Command (Runs Simulation -> Extraction -> Validation -> Training -> Benchmarks -> 14 Figures)
 .venv/bin/python3 scripts/run_all.py --config configs/default_50hz.yaml --with-figures
 
-# Fast Reproduction Reusing Existing Raw Trajectories + Running Full 232-Test Isolated Production Suite (83 Unit + 149 E2E)
+# Fast Reproduction Reusing Existing Raw Trajectories + Running Full Isolated Production Test Suite
 .venv/bin/python3 scripts/run_all.py --config configs/default_50hz.yaml --skip-simulation --with-figures
 .venv/bin/pytest tests/ -q</pre>
 
@@ -558,24 +558,24 @@ def build_html() -> str:
   </thead>
   <tbody>
     <tr>
-      <td><strong>Member 1</strong><br>Grid Physics Lead</td>
+      <td><strong>Aditya Jha</strong><br>Member 1 — Grid Physics Lead</td>
       <td><code>ieee39_data.py</code>, <code>renewables.py</code>, <code>dynamic_engine.py</code>, <code>run_simulations.py</code></td>
-      <td>50.0 Hz IEEE 39-bus model (<code>H<sub>39</sub>=42 s</code>), NR AC power flow (<code>&lt;10<sup>-11</sup> pu</code>), machine-base 5% droop, complete vs. partial Kron outage physics, and linear 9-bus RES displacement.</td>
+      <td>50.0 Hz IEEE 39-bus model (<code>H<sub>39</sub>=42 s</code>), NR AC power flow (<code>&lt;10<sup>-11</sup> pu</code>), machine-base 5% droop, complete vs. partial Kron outage physics, and Approach B co-located GFL inertia/damping/droop derating.</td>
     </tr>
     <tr>
-      <td><strong>Member 2</strong><br>PMU &amp; Features Lead</td>
+      <td><strong>Akshat Jain</strong><br>Member 2 — PMU &amp; Features Lead</td>
       <td><code>pmu_recorder.py</code>, <code>window_slicer.py</code>, <code>extractor.py</code>, <code>dataset_validator.py</code></td>
-      <td><code>raw_sim</code> vs. <code>raw</code> firewall, area-weighted <code>f<sub>sys,pmu</sub></code>, causal 5-pt backward OLS ROCOF (<code>0.0003</code> variance ratio), 14 canonical features, and 14-check SHA-256 dataset audit.</td>
+      <td><code>raw_sim</code> vs. <code>raw</code> firewall, strict PMU-only enforcement, area-weighted <code>f<sub>sys,pmu</sub></code>, causal 5-pt backward OLS ROCOF (<code>0.0003</code> variance ratio), 14 canonical features, and 14-check SHA-256 dataset audit.</td>
     </tr>
     <tr>
-      <td><strong>Member 3</strong><br>ML &amp; Calibration Lead</td>
+      <td><strong>Arshdeep Singh</strong><br>Member 3 — ML &amp; Calibration Lead</td>
       <td><code>regressors.py</code>, <code>classifiers.py</code>, <code>calibrated_gb.py</code>, <code>train_models.py</code></td>
-      <td>7 regressors (why Ridge/Swing reach <code>3.4–4.2 mHz</code> vs. GBDT <code>7.7 mHz</code>), 5-fold cross-fit Platt &amp; 216-knot PAVA Isotonic calibration, quantile/OOD intervals, and <code>&tau;=0.70</code> zero-missed safety sweep.</td>
+      <td>7 regressors (validation-selected Ridge <code>3.4 mHz</code> vs. proposed GBDT <code>7.7 mHz</code> &amp; noise robustness), 5-fold cross-fit Platt &amp; 216-knot PAVA Isotonic calibration, quantile/OOD intervals, and <code>&tau;=0.70</code> zero-missed safety sweep.</td>
     </tr>
     <tr>
-      <td><strong>Member 4</strong><br>Robustness &amp; Speed Lead</td>
+      <td><strong>Raj Bathla</strong><br>Member 4 — Robustness &amp; Speed Lead</td>
       <td><code>sensitivity.py</code>, <code>ood_generalization.py</code>, <code>noise_stress.py</code>, <code>latency.py</code>, <code>interpretability.py</code></td>
-      <td>Unsmoothed <code>0.5–2.0 s</code> window trade-off, <code>480</code>-scenario OOD breakdown, <code>0–50 mHz</code> noise stability, <code>13/39</code> sparse PMU &amp; <code>25 fps</code> ablations, paired bootstrap/Wilcoxon tests, and <code>2.38 ms</code> (<code>52.7&times;</code>) latency.</td>
+      <td>Strictly pre-nadir <code>0.5–2.0 s</code> window trade-off (<code>472</code> causal OOD at <code>2.0 s</code>), <code>480</code>-scenario OOD breakdown, <code>0–50 mHz</code> noise stability, <code>13/39</code> sparse PMU &amp; <code>25 fps</code> ablations, Holm sign-flip permutation tests, and <code>2.53 ms</code> desktop latency.</td>
     </tr>
   </tbody>
 </table>

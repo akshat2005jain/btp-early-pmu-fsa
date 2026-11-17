@@ -1,10 +1,11 @@
 {
-  "input_dir": "/Users/akshat/Desktop/btp-early-pmu-fsa/data/raw",
-  "output_dir": "/Users/akshat/Desktop/btp-early-pmu-fsa/data/processed",
+  "feature_schema_version": "2.0.0",
+  "input_dir": "data/raw",
+  "output_dir": "data/processed",
   "observed_buses": "all_39",
   "files": [
     {
-      "file": "/Users/akshat/Desktop/btp-early-pmu-fsa/data/processed/features_t0.5s.npz",
+      "file": "data/processed/features_t0.5s.npz",
       "t_obs_s": 0.5,
       "strict_nadir": true,
       "n_input": 750,
@@ -15,7 +16,7 @@
       "excluded_scenarios": []
     },
     {
-      "file": "/Users/akshat/Desktop/btp-early-pmu-fsa/data/processed/features_t1.0s.npz",
+      "file": "data/processed/features_t1.0s.npz",
       "t_obs_s": 1.0,
       "strict_nadir": true,
       "n_input": 750,
@@ -26,7 +27,7 @@
       "excluded_scenarios": []
     },
     {
-      "file": "/Users/akshat/Desktop/btp-early-pmu-fsa/data/processed/features.npz",
+      "file": "data/processed/features.npz",
       "t_obs_s": 1.0,
       "strict_nadir": true,
       "n_input": 750,
@@ -37,7 +38,7 @@
       "excluded_scenarios": []
     },
     {
-      "file": "/Users/akshat/Desktop/btp-early-pmu-fsa/data/processed/features_t1.5s.npz",
+      "file": "data/processed/features_t1.5s.npz",
       "t_obs_s": 1.5,
       "strict_nadir": true,
       "n_input": 750,
@@ -48,7 +49,7 @@
       "excluded_scenarios": []
     },
     {
-      "file": "/Users/akshat/Desktop/btp-early-pmu-fsa/data/processed/features_t2.0s.npz",
+      "file": "data/processed/features_t2.0s.npz",
       "t_obs_s": 2.0,
       "strict_nadir": true,
       "n_input": 750,

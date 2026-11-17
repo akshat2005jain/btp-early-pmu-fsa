@@ -141,6 +141,15 @@ def _build_extractor(
         return FeatureExtractor(f_nominal=float(f_nominal), handle_nans=has_partial_pmu)
 
 
+def _to_portable_path(p: Optional[Path]) -> Optional[str]:
+    if p is None:
+        return None
+    try:
+        return p.resolve().relative_to(PROJECT_ROOT.resolve()).as_posix()
+    except Exception:
+        return p.as_posix()
+
+
 def _canonical_feature_columns(X_df: pd.DataFrame) -> List[str]:
     target_names = list(getattr(extractor_mod, "CANONICAL_FEATURE_NAMES", DESCRIPTIVE_FEATURE_NAMES))
     present = [c for c in target_names if c in X_df.columns]
@@ -313,7 +322,7 @@ def extract_for_window(
         logger.info("Saved tabular CSV (%d rows, %d cols) to %s", len(df_combined), df_combined.shape[1], csv_path)
 
     return {
-        "file": str(output_path),
+        "file": _to_portable_path(output_path),
         "t_obs_s": float(t_obs),
         "strict_nadir": bool(strict_nadir),
         "n_input": len(scenarios),
@@ -362,7 +371,7 @@ def main(args=None) -> int:
     )
 
     strict_primary = bool(parsed.strict_nadir or (not parsed.no_strict_nadir))
-    strict_sweep = bool(parsed.strict_nadir)
+    strict_sweep = strict_primary
 
     extraction_records: List[Dict[str, Any]] = []
     windows = [0.5, 1.0, 1.5, 2.0] if parsed.all_windows else [float(parsed.t_obs)]
@@ -414,8 +423,9 @@ def main(args=None) -> int:
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(
             {
-                "input_dir": str(in_dir),
-                "output_dir": str(out_dir),
+                "feature_schema_version": "2.0.0",
+                "input_dir": _to_portable_path(in_dir),
+                "output_dir": _to_portable_path(out_dir),
                 "observed_buses": list(parsed.observed_buses) if parsed.observed_buses is not None else "all_39",
                 "files": extraction_records,
             },
@@ -424,14 +434,16 @@ def main(args=None) -> int:
         )
 
     if parsed.validate:
+        cand_sim = in_dir.parent / "raw_sim"
         report = validate_dataset(
             raw_pmu_dir=in_dir,
             processed_dir=out_dir,
             f_nominal=parsed.f_nominal,
             threshold=parsed.threshold,
+            raw_sim_dir=cand_sim if cand_sim.exists() else None,
         )
-        norm_out = str(out_dir).rstrip("/")
-        is_default_proc = norm_out in ("data/processed", str(PROJECT_ROOT / "data" / "processed"))
+        norm_out = _to_portable_path(out_dir) or str(out_dir).rstrip("/")
+        is_default_proc = norm_out == "data/processed"
         man_p = Path("data/manifest.json") if is_default_proc else (out_dir.parent / "manifest.json")
         md_p = Path("results/dataset_quality_report.md") if is_default_proc else (out_dir.parent / "dataset_quality_report.md")
         write_dataset_quality_report(report, md_path=md_p, manifest_path=man_p)

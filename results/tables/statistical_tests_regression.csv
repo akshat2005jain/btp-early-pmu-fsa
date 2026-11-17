@@ -1,8 +1,8 @@
-reference_model,baseline_model,metric,reference_score,baseline_score,delta_ref_minus_base,ci95_low,ci95_high,p_value_wilcoxon,p_value_bootstrap,significant_p005
-gbdt,mean,mae,0.00772,0.21043,-0.20271,-0.24198,-0.16454,0.0,0.0,True
-gbdt,analytical,mae,0.00772,0.00421,0.00352,0.00167,0.00562,0.000136,0.0,True
-gbdt,linear,mae,0.00772,0.0034,0.00433,0.00259,0.00653,3.3e-05,0.0,True
-gbdt,dt,mae,0.00772,0.01112,-0.00339,-0.00538,-0.0015,0.004242,0.0,True
-gbdt,rf,mae,0.00772,0.00905,-0.00132,-0.00275,-4e-05,0.095601,0.044,True
-gbdt,gbdt,mae,0.00772,0.00772,0.0,0.0,0.0,1.0,1.0,False
-gbdt,lgbm,mae,0.00772,0.00859,-0.00087,-0.00283,0.00097,0.059412,0.308,False
+reference_model,baseline_model,n_paired,metric,direction,reference_score,baseline_score,delta_ref_minus_base,ci95_low,ci95_high,test_statistic,p_value_permutation,p_holm_adjusted,p_value_bootstrap,p_value_wilcoxon,significant_unadjusted_005,significant_holm_005,significant_p005,practical_significance,test_disagreement_note
+gbdt,mean,52,mae,lower_is_better,0.00772,0.21043,-0.20271,-0.24126,-0.1672,-0.20271,0.0002,0.0012,0.0005,0.0,True,True,True,material (>=20 mHz MAE difference),consistent
+gbdt,analytical,52,mae,lower_is_better,0.00772,0.00421,0.00352,0.00168,0.00564,0.00352,0.0004,0.0016,0.001,0.000136,True,True,True,negligible (<5 mHz; below typical PMU frequency noise floor),consistent
+gbdt,linear,52,mae,lower_is_better,0.00772,0.0034,0.00433,0.00251,0.00651,0.00433,0.0002,0.0012,0.0005,3.3e-05,True,True,True,negligible (<5 mHz; below typical PMU frequency noise floor),consistent
+gbdt,dt,52,mae,lower_is_better,0.00772,0.01112,-0.00339,-0.00533,-0.00147,-0.00339,0.0014,0.004199,0.0005,0.004242,True,True,True,negligible (<5 mHz; below typical PMU frequency noise floor),consistent
+gbdt,rf,52,mae,lower_is_better,0.00772,0.00905,-0.00132,-0.00278,1e-05,-0.00132,0.070986,0.141972,0.064468,0.095601,False,False,False,negligible (<5 mHz; below typical PMU frequency noise floor),consistent
+gbdt,gbdt,52,mae,lower_is_better,0.00772,0.00772,0.0,0.0,0.0,0.0,1.0,1.0,1.0,1.0,False,False,False,self_reference,self_reference
+gbdt,lgbm,52,mae,lower_is_better,0.00772,0.00859,-0.00087,-0.00281,0.00103,-0.00087,0.376925,0.376925,0.364818,0.059412,False,False,False,negligible (<5 mHz; below typical PMU frequency noise floor),consistent

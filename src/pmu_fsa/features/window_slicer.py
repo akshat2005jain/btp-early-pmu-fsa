@@ -57,12 +57,14 @@ class CausalWindow(dict):
             psys_arr = np.asarray(pmu_sys_frequency, dtype=float)
         elif bf_arr.size > 0:
             psys_arr = estimate_pmu_system_frequency(bf_arr)
-        elif coi_frequency is not None:
-            psys_arr = np.asarray(coi_frequency, dtype=float)
         else:
-            psys_arr = np.zeros(len(ts_arr), dtype=float)
+            raise ValueError(
+                "CausalWindow requires observable PMU 'bus_frequencies' or 'pmu_sys_frequency'; "
+                "falling back to internal 'coi_frequency' is forbidden."
+            )
 
-        coi_arr = np.asarray(coi_frequency, dtype=float) if coi_frequency is not None else psys_arr.copy()
+        # Keep coi_frequency slot strictly as an observable PMU alias; never copy simulator COI.
+        coi_arr = psys_arr.copy()
 
         self["timestamps"] = ts_arr
         self["bus_frequencies"] = bf_arr
@@ -289,10 +291,7 @@ def extract_causal_window(
         )
 
     pmu_sys_slice = estimate_pmu_system_frequency(sliced_arrays["bus_frequencies"])
-    if "coi_frequency" in data:
-        coi_slice = np.asarray(data["coi_frequency"], dtype=float)[idx_start:idx_end].copy()
-    else:
-        coi_slice = pmu_sys_slice.copy()
+    coi_slice = pmu_sys_slice.copy()
 
     extra_channels: Dict[str, Any] = {}
     handled_keys = (

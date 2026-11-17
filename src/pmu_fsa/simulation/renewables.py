@@ -1,4 +1,13 @@
-"""Synchronous inertia displacement model for converter-interfaced renewable generation."""
+"""Co-located effective-response derating model for converter-interfaced renewables (Approach B).
+
+This module models converter-interfaced generation co-located at non-slack synchronous
+generator buses (Buses 30, 32-39) via effective rotational inertia, mechanical damping,
+and primary governor participation derating by (1 - alpha) while preserving net terminal
+bus active-power dispatch in the pre-disturbance AC power flow. Optional synthetic inertia
+(h_vir) and fast converter droop (enable_droop, r_ren, t_inv) are supported when enabled.
+Explicit network-level renewable bus placement, pre-contingency line-flow redistribution,
+PLL dynamics, and converter current saturation are outside this model's scope.
+"""
 
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
@@ -18,7 +27,7 @@ DEFAULT_DISPLACED_BUSES: List[int] = [30, 32, 33, 34, 35, 36, 37, 38, 39]
 
 @dataclass
 class RenewablePenetrationConfig:
-    """Configuration for synchronous generation displacement by converter-interfaced renewables."""
+    """Configuration for co-located effective inertia/damping/droop derating (Approach B)."""
     p_ren: float = 0.20
     displaced_buses: List[int] = field(default_factory=lambda: list(DEFAULT_DISPLACED_BUSES))
     h_vir: float = 0.0

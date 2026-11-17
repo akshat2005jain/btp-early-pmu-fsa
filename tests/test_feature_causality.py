@@ -211,6 +211,40 @@ class TestCausalityAndZeroLeakage:
             assert feats_num[k] == clean_features[k], f"Feature {k} leaked internal coi_frequency!"
             assert feats_nan[k] == clean_features[k], f"Feature {k} read NaN coi_frequency!"
 
+    def test_missing_pmu_channels_fail_without_coi_fallback(
+        self,
+        base_dynamic_scenario: Dict[str, Any],
+    ) -> None:
+        extractor = FeatureExtractor(f_nominal=50.0)
+
+        missing_bf = copy.deepcopy(base_dynamic_scenario)
+        del missing_bf["bus_frequencies"]
+        missing_bf["coi_frequency"][:] = 49.65
+        with pytest.raises((KeyError, ValueError)):
+            extractor.extract_features_dict(missing_bf, t_obs=1.0)
+
+        w_no_bf = dict(extract_causal_window(base_dynamic_scenario, t_obs=1.0))
+        del w_no_bf["bus_frequencies"]
+        w_no_bf["coi_frequency"] = np.full(len(w_no_bf["timestamps"]), 49.65)
+        with pytest.raises((KeyError, ValueError)):
+            extract_features(w_no_bf, f_nominal=50.0)
+
+        w_no_va = dict(extract_causal_window(base_dynamic_scenario, t_obs=1.0))
+        del w_no_va["voltage_angles"]
+        w_no_va["coi_frequency"] = np.full(len(w_no_va["timestamps"]), 49.65)
+        with pytest.raises((KeyError, ValueError)):
+            extract_features(w_no_va, f_nominal=50.0)
+
+        with pytest.raises(ValueError, match="forbidden"):
+            CausalWindow(
+                timestamps=np.linspace(1.0, 2.0, 51),
+                bus_frequencies=np.empty((51, 0)),
+                bus_rocof=np.empty((51, 0)),
+                voltage_magnitudes=np.ones((51, 39)),
+                voltage_angles=np.zeros((51, 39)),
+                coi_frequency=np.full(51, 49.5),
+            )
+
     def test_noise_propagates_into_all_14_canonical_features(
         self,
         raw_dynamic_trajectory: Dict[str, Any],

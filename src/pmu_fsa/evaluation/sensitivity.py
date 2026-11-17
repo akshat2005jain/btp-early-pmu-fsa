@@ -90,6 +90,7 @@ class WindowSensitivityBenchmark:
         f_nominal: float = 50.0,
         random_state: int = 42,
         models_dir: Optional[Union[str, Path]] = None,
+        strict_nadir: bool = True,
     ) -> None:
         raw_windows = window_lengths if window_lengths is not None else [0.5, 1.0, 1.5, 2.0]
         for w in raw_windows:
@@ -102,6 +103,27 @@ class WindowSensitivityBenchmark:
         self.f_nominal = float(f_nominal)
         self.random_state = int(random_state)
         self.models_dir = Path(models_dir) if models_dir is not None else None
+        self.strict_nadir = bool(strict_nadir)
+
+    @classmethod
+    def filter_causal_scenarios(
+        cls,
+        scenarios: List[Dict[str, Any]],
+        t_obs: float,
+    ) -> Tuple[List[Dict[str, Any]], List[str]]:
+        """Filter scenarios strictly to those satisfying t_0 + t_obs < t_nadir (lead_time > 0)."""
+        if not scenarios:
+            return [], []
+        lead_times = cls._extract_lead_times(scenarios, t_obs)
+        eligible: List[Dict[str, Any]] = []
+        excluded_ids: List[str] = []
+        for idx, (scen, lt) in enumerate(zip(scenarios, lead_times)):
+            if lt > 1e-6:
+                eligible.append(scen)
+            else:
+                sid = str(scen.get("metadata", {}).get("scenario_id", f"scenario_{idx:04d}"))
+                excluded_ids.append(sid)
+        return eligible, excluded_ids
 
     @staticmethod
     def _extract_lead_times(scenarios: List[Dict[str, Any]], t_obs: float) -> List[float]:
@@ -136,7 +158,50 @@ class WindowSensitivityBenchmark:
         reg: Any,
         clf: Any,
         t_obs: float,
+        n_population_total: Optional[int] = None,
+        excluded_ids: Optional[List[str]] = None,
+        population_mode: str = "window_specific_causal",
     ) -> Dict[str, Any]:
+        excl = list(excluded_ids or [])
+        n_eligible = len(eval_scens)
+        n_total = int(n_population_total) if n_population_total is not None else n_eligible
+        n_excluded = max(0, n_total - n_eligible)
+
+        if n_eligible == 0:
+            return {
+                "window_obs": float(t_obs),
+                "evaluation_population": population_mode,
+                "n_causal": 0,
+                "n_eligible": 0,
+                "n_excluded": n_excluded,
+                "n_total": n_total,
+                "causal_valid_ratio": 0.0,
+                "excluded_scenario_ids": ";".join(excl),
+                "t_lead": float("nan"),
+                "t_lead_median": float("nan"),
+                "t_lead_min": float("nan"),
+                "mae": float("nan"),
+                "rmse": float("nan"),
+                "bias": float("nan"),
+                "median_ae": float("nan"),
+                "p95_ae": float("nan"),
+                "r2": float("nan"),
+                "precision": float("nan"),
+                "recall": float("nan"),
+                "f1": float("nan"),
+                "pr_auc": float("nan"),
+                "roc_auc": float("nan"),
+                "brier_score": float("nan"),
+                "ece": float("nan"),
+                "fnr": float("nan"),
+                "fpr_secure": float("nan"),
+                "fnr_insecure": float("nan"),
+                "missed_insecure_count": 0,
+                "mae_raw": float("nan"),
+                "rmse_raw": float("nan"),
+                "f1_raw": float("nan"),
+            }
+
         reg_m = reg.evaluate(X_eval, y_eval)
         probs = clf.predict_proba(X_eval)
         p_sec = np.asarray(probs[:, 1] if hasattr(probs, "ndim") and probs.ndim > 1 else probs, dtype=float)
@@ -147,12 +212,11 @@ class WindowSensitivityBenchmark:
         brier = float(calc_brier_score(y_sec_eval, p_sec, threshold=self.threshold))
 
         lead_arr = np.asarray(self._extract_lead_times(eval_scens, t_obs), dtype=float)
-        n_total = len(lead_arr)
-        n_causal = int(np.sum(lead_arr > 1e-6)) if n_total > 0 else 0
+        n_causal = int(np.sum(lead_arr > 1e-6))
         causal_ratio = float(n_causal / n_total) if n_total > 0 else 0.0
-        t_lead_mean = float(np.mean(lead_arr)) if n_total > 0 else 0.0
-        t_lead_med = float(np.median(lead_arr)) if n_total > 0 else 0.0
-        t_lead_min = float(np.min(lead_arr)) if n_total > 0 else 0.0
+        t_lead_mean = float(np.mean(lead_arr))
+        t_lead_med = float(np.median(lead_arr))
+        t_lead_min = float(np.min(lead_arr))
 
         mae = float(reg_m["mae"])
         rmse = float(reg_m["rmse"])
@@ -161,9 +225,13 @@ class WindowSensitivityBenchmark:
 
         return {
             "window_obs": float(t_obs),
+            "evaluation_population": population_mode,
             "n_causal": n_causal,
+            "n_eligible": n_eligible,
+            "n_excluded": n_excluded,
             "n_total": n_total,
             "causal_valid_ratio": round(causal_ratio, 4),
+            "excluded_scenario_ids": ";".join(excl),
             "t_lead": round(t_lead_mean, 4),
             "t_lead_median": round(t_lead_med, 4),
             "t_lead_min": round(t_lead_min, 4),
@@ -195,13 +263,16 @@ class WindowSensitivityBenchmark:
         split_ratio: float = 0.70,
         default_window_models: Optional[Tuple[float, Any, Any]] = None,
     ) -> Dict[str, Any]:
-        """Run leak-free window sensitivity sweep across configured window lengths."""
+        """Run leak-free, strictly pre-nadir window sensitivity sweep across configured window lengths."""
         base_columns = ["window_obs", "mae", "rmse", "r2", "f1", "ece"]
         if not scenarios:
             return {
                 "columns": base_columns,
                 "results": [],
                 "ood_results": [],
+                "common_causal_results": [],
+                "ood_common_causal_results": [],
+                "excluded_by_window": {},
                 "partition_protocol": "empty",
             }
 
@@ -209,27 +280,64 @@ class WindowSensitivityBenchmark:
             scenarios, random_state=self.random_state
         )
 
-        extractor = FeatureExtractor(f_nominal=self.f_nominal)
+        extractor = FeatureExtractor(f_nominal=self.f_nominal, strict_nadir=self.strict_nadir)
         rows: List[Dict[str, Any]] = []
         ood_rows: List[Dict[str, Any]] = []
+        common_id_rows: List[Dict[str, Any]] = []
+        common_ood_rows: List[Dict[str, Any]] = []
+        excluded_by_window: Dict[str, Dict[str, List[str]]] = {}
+
+        max_w = max(self.window_lengths)
+        test_common, test_common_excl = (
+            self.filter_causal_scenarios(test_scens, max_w) if self.strict_nadir else (list(test_scens), [])
+        )
+        ood_common, ood_common_excl = (
+            self.filter_causal_scenarios(ood_scens, max_w) if self.strict_nadir else (list(ood_scens), [])
+        )
 
         for t_obs in self.window_lengths:
-            X_tr_df, y_tr_raw, ys_tr_raw, _ = extractor.transform_batch(train_scens, t_obs=t_obs, as_dataframe=True)
+            if self.strict_nadir:
+                tr_elig, tr_excl = self.filter_causal_scenarios(train_scens, t_obs)
+                va_elig, va_excl = self.filter_causal_scenarios(val_scens, t_obs)
+                te_elig, te_excl = self.filter_causal_scenarios(test_scens, t_obs)
+                ood_elig, ood_excl = self.filter_causal_scenarios(ood_scens, t_obs)
+            else:
+                tr_elig, tr_excl = list(train_scens), []
+                va_elig, va_excl = list(val_scens), []
+                te_elig, te_excl = list(test_scens), []
+                ood_elig, ood_excl = list(ood_scens), []
+
+            excluded_by_window[f"{t_obs:.1f}s"] = {
+                "train": tr_excl,
+                "val": va_excl,
+                "id_test": te_excl,
+                "ood_test": ood_excl,
+            }
+
+            if len(tr_elig) == 0:
+                continue
+
+            X_tr_df, y_tr_raw, _, _ = extractor.transform_batch(tr_elig, t_obs=t_obs, as_dataframe=True)
             X_train = X_tr_df.values if hasattr(X_tr_df, "values") else np.asarray(X_tr_df, dtype=float)
             y_train = np.asarray(y_tr_raw, dtype=float)
             ys_train = np.where(y_train >= self.threshold, 1, 0).astype(int)
 
-            if len(val_scens) > 0:
-                X_va_df, y_va_raw, _, _ = extractor.transform_batch(val_scens, t_obs=t_obs, as_dataframe=True)
+            if len(va_elig) > 0:
+                X_va_df, y_va_raw, _, _ = extractor.transform_batch(va_elig, t_obs=t_obs, as_dataframe=True)
                 X_val = X_va_df.values if hasattr(X_va_df, "values") else np.asarray(X_va_df, dtype=float)
                 y_val = np.asarray(y_va_raw, dtype=float)
             else:
                 X_val, y_val = None, None
 
-            X_te_df, y_te_raw, _, _ = extractor.transform_batch(test_scens, t_obs=t_obs, as_dataframe=True)
-            X_test = X_te_df.values if hasattr(X_te_df, "values") else np.asarray(X_te_df, dtype=float)
-            y_test = np.asarray(y_te_raw, dtype=float)
-            ys_test = np.where(y_test >= self.threshold, 1, 0).astype(int)
+            if len(te_elig) > 0:
+                X_te_df, y_te_raw, _, _ = extractor.transform_batch(te_elig, t_obs=t_obs, as_dataframe=True)
+                X_test = X_te_df.values if hasattr(X_te_df, "values") else np.asarray(X_te_df, dtype=float)
+                y_test = np.asarray(y_te_raw, dtype=float)
+                ys_test = np.where(y_test >= self.threshold, 1, 0).astype(int)
+            else:
+                X_test = np.empty((0, X_train.shape[1]), dtype=float)
+                y_test = np.empty(0, dtype=float)
+                ys_test = np.empty(0, dtype=int)
 
             # Reuse pre-saved model if provided for its exact training window; otherwise fit strictly on train (+ val)
             if (
@@ -237,7 +345,7 @@ class WindowSensitivityBenchmark:
                 and abs(float(default_window_models[0]) - t_obs) < 1e-6
                 and default_window_models[1] is not None
                 and default_window_models[2] is not None
-                and getattr(default_window_models[1], "n_features_in_", X_test.shape[1]) == X_test.shape[1]
+                and getattr(default_window_models[1], "n_features_in_", X_train.shape[1]) == X_train.shape[1]
             ):
                 reg, clf = default_window_models[1], default_window_models[2]
             else:
@@ -267,29 +375,98 @@ class WindowSensitivityBenchmark:
                     clf.fit(X_train, ys_train)
 
             row_id = self._evaluate_split_at_window(
-                test_scens, X_test, y_test, ys_test, reg, clf, t_obs
+                te_elig,
+                X_test,
+                y_test,
+                ys_test,
+                reg,
+                clf,
+                t_obs,
+                n_population_total=len(test_scens),
+                excluded_ids=te_excl,
+                population_mode="window_specific_causal" if self.strict_nadir else "all_scenarios",
             )
             rows.append(row_id)
 
+            if len(test_common) > 0:
+                X_tc_df, y_tc_raw, _, _ = extractor.transform_batch(test_common, t_obs=t_obs, as_dataframe=True)
+                X_tc = X_tc_df.values if hasattr(X_tc_df, "values") else np.asarray(X_tc_df, dtype=float)
+                y_tc = np.asarray(y_tc_raw, dtype=float)
+                ys_tc = np.where(y_tc >= self.threshold, 1, 0).astype(int)
+                common_id_rows.append(
+                    self._evaluate_split_at_window(
+                        test_common,
+                        X_tc,
+                        y_tc,
+                        ys_tc,
+                        reg,
+                        clf,
+                        t_obs,
+                        n_population_total=len(test_scens),
+                        excluded_ids=test_common_excl,
+                        population_mode="common_causal_intersection",
+                    )
+                )
+
             if len(ood_scens) > 0:
-                X_ood_df, y_ood_raw, _, _ = extractor.transform_batch(ood_scens, t_obs=t_obs, as_dataframe=True)
-                X_ood = X_ood_df.values if hasattr(X_ood_df, "values") else np.asarray(X_ood_df, dtype=float)
-                y_ood = np.asarray(y_ood_raw, dtype=float)
-                ys_ood = np.where(y_ood >= self.threshold, 1, 0).astype(int)
+                if len(ood_elig) > 0:
+                    X_ood_df, y_ood_raw, _, _ = extractor.transform_batch(ood_elig, t_obs=t_obs, as_dataframe=True)
+                    X_ood = X_ood_df.values if hasattr(X_ood_df, "values") else np.asarray(X_ood_df, dtype=float)
+                    y_ood = np.asarray(y_ood_raw, dtype=float)
+                    ys_ood = np.where(y_ood >= self.threshold, 1, 0).astype(int)
+                else:
+                    X_ood = np.empty((0, X_train.shape[1]), dtype=float)
+                    y_ood = np.empty(0, dtype=float)
+                    ys_ood = np.empty(0, dtype=int)
                 row_ood = self._evaluate_split_at_window(
-                    ood_scens, X_ood, y_ood, ys_ood, reg, clf, t_obs
+                    ood_elig,
+                    X_ood,
+                    y_ood,
+                    ys_ood,
+                    reg,
+                    clf,
+                    t_obs,
+                    n_population_total=len(ood_scens),
+                    excluded_ids=ood_excl,
+                    population_mode="window_specific_causal" if self.strict_nadir else "all_scenarios",
                 )
                 ood_rows.append(row_ood)
+
+                if len(ood_common) > 0:
+                    X_oc_df, y_oc_raw, _, _ = extractor.transform_batch(ood_common, t_obs=t_obs, as_dataframe=True)
+                    X_oc = X_oc_df.values if hasattr(X_oc_df, "values") else np.asarray(X_oc_df, dtype=float)
+                    y_oc = np.asarray(y_oc_raw, dtype=float)
+                    ys_oc = np.where(y_oc >= self.threshold, 1, 0).astype(int)
+                    common_ood_rows.append(
+                        self._evaluate_split_at_window(
+                            ood_common,
+                            X_oc,
+                            y_oc,
+                            ys_oc,
+                            reg,
+                            clf,
+                            t_obs,
+                            n_population_total=len(ood_scens),
+                            excluded_ids=ood_common_excl,
+                            population_mode="common_causal_intersection",
+                        )
+                    )
 
         return {
             "columns": base_columns,
             "results": rows,
             "ood_results": ood_rows,
+            "common_causal_results": common_id_rows,
+            "ood_common_causal_results": common_ood_rows,
+            "excluded_by_window": excluded_by_window,
             "partition_protocol": protocol,
+            "strict_nadir": self.strict_nadir,
             "n_train": len(train_scens),
             "n_val": len(val_scens),
             "n_test": len(test_scens),
             "n_ood_test": len(ood_scens),
+            "n_test_common_causal": len(test_common),
+            "n_ood_common_causal": len(ood_common),
         }
 
     def run_multi_model_sweep(
@@ -310,6 +487,7 @@ class WindowSensitivityBenchmark:
                 threshold=self.threshold,
                 f_nominal=self.f_nominal,
                 random_state=self.random_state,
+                strict_nadir=self.strict_nadir,
             )
             sweep_results[f"reg_{r_name}"] = bench.run(scenarios)
 
@@ -320,13 +498,20 @@ class WindowSensitivityBenchmark:
                 threshold=self.threshold,
                 f_nominal=self.f_nominal,
                 random_state=self.random_state,
+                strict_nadir=self.strict_nadir,
             )
             sweep_results[f"clf_{c_name}"] = bench.run(scenarios)
 
         return sweep_results
 
     def to_dataframe(self, results: Dict[str, Any], split: str = "id_test") -> pd.DataFrame:
-        key = "ood_results" if split == "ood_test" else "results"
+        key_map = {
+            "id_test": "results",
+            "ood_test": "ood_results",
+            "id_common": "common_causal_results",
+            "ood_common": "ood_common_causal_results",
+        }
+        key = key_map.get(split, "results")
         rows = results.get(key, [])
         cols = results.get("columns", ["window_obs", "mae", "rmse", "r2", "f1", "ece"])
         df = pd.DataFrame(rows)

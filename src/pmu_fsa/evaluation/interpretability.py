@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-from pmu_fsa.evaluation.sensitivity import split_scenarios_by_partition
+from pmu_fsa.evaluation.sensitivity import WindowSensitivityBenchmark, split_scenarios_by_partition
 from pmu_fsa.features.extractor import FeatureExtractor
 from pmu_fsa.models.calibrated_gb import CalibratedGBDTClassifier
 from pmu_fsa.models.calibration_metrics import (
@@ -49,6 +49,9 @@ FEATURE_GROUP_INDICES: Dict[str, List[int]] = {
     "freq_plus_rocof": [0, 1, 2, 3, 4, 5, 6],
     "no_spatial_angle": [0, 1, 2, 3, 4, 5, 6, 12, 13],
     "spatial_angle_only": [7, 8, 9, 10, 11],
+    "no_rocof": [4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    "no_freq_level": [0, 1, 2, 3, 7, 8, 9, 10, 11, 12, 13],
+    "no_curvature": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
 }
 
 
@@ -281,18 +284,20 @@ class InterpretabilityAnalyzer:
         scenarios: List[Dict[str, Any]],
         regressor_type: str = "gbdt",
         classifier_type: str = "calibrated_gb",
+        include_single_family_drops: bool = False,
     ) -> Dict[str, Any]:
-        """Evaluate all 7 feature-group & observability ablations with strict partition isolation:
-        `all_14`, `freq_only`, `freq_plus_rocof`, `no_spatial_angle`, `spatial_angle_only`,
-        `partial_13bus_pmu`, and `fps_25_vs_50`.
-        """
+        """Evaluate feature-group & observability ablations with strict pre-nadir and partition isolation."""
         if not scenarios:
             return {"results": [], "columns": []}
 
-        train_scens, val_scens, test_scens, ood_scens, protocol = split_scenarios_by_partition(
+        train_raw, val_raw, test_raw, ood_raw, protocol = split_scenarios_by_partition(
             scenarios, random_state=self.seed
         )
-        extractor = FeatureExtractor(t_obs=self.t_obs, f_nominal=self.f_nominal)
+        train_scens, _ = WindowSensitivityBenchmark.filter_causal_scenarios(train_raw, self.t_obs)
+        val_scens, _ = WindowSensitivityBenchmark.filter_causal_scenarios(val_raw, self.t_obs)
+        test_scens, _ = WindowSensitivityBenchmark.filter_causal_scenarios(test_raw, self.t_obs)
+        ood_scens, _ = WindowSensitivityBenchmark.filter_causal_scenarios(ood_raw, self.t_obs)
+        extractor = FeatureExtractor(t_obs=self.t_obs, f_nominal=self.f_nominal, strict_nadir=True)
 
         def _extract_full(scen_list: List[Dict[str, Any]]) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[str]]:
             if not scen_list:
@@ -373,6 +378,12 @@ class InterpretabilityAnalyzer:
             ("no_spatial_angle", "Temporal Frequency + ROCOF + Curvature, No Spatial/Angle (9 features)", FEATURE_GROUP_INDICES["no_spatial_angle"]),
             ("spatial_angle_only", "Multi-Area Spatial Dispersion & Phase Angles Only (5 features)", FEATURE_GROUP_INDICES["spatial_angle_only"]),
         ]
+        if include_single_family_drops:
+            ablation_specs.extend([
+                ("no_rocof", "Drop First-Order ROCOF Family (10 features)", FEATURE_GROUP_INDICES["no_rocof"]),
+                ("no_freq_level", "Drop Aggregate Frequency Level & Integral Family (11 features)", FEATURE_GROUP_INDICES["no_freq_level"]),
+                ("no_curvature", "Drop Second-Order Curvature Family (12 features)", FEATURE_GROUP_INDICES["no_curvature"]),
+            ])
 
         rows: List[Dict[str, Any]] = []
         n_avail = X_tr.shape[1]
@@ -529,13 +540,18 @@ class InterpretabilityAnalyzer:
         if not scenarios:
             return pd.DataFrame()
 
-        train_scens, _, test_scens, _, _ = split_scenarios_by_partition(scenarios, random_state=self.seed)
-        extractor = FeatureExtractor(f_nominal=self.f_nominal)
+        train_raw, _, test_raw, _, _ = split_scenarios_by_partition(scenarios, random_state=self.seed)
+        extractor = FeatureExtractor(f_nominal=self.f_nominal, strict_nadir=True)
         rows: List[Dict[str, Any]] = []
 
         for w in windows:
-            X_tr_df, y_tr, _, _ = extractor.transform_batch(train_scens, t_obs=float(w), as_dataframe=True)
-            X_te_df, y_te, _, _ = extractor.transform_batch(test_scens, t_obs=float(w), as_dataframe=True)
+            w_flt = float(w)
+            train_scens, _ = WindowSensitivityBenchmark.filter_causal_scenarios(train_raw, w_flt)
+            test_scens, _ = WindowSensitivityBenchmark.filter_causal_scenarios(test_raw, w_flt)
+            if not train_scens or not test_scens:
+                continue
+            X_tr_df, y_tr, _, _ = extractor.transform_batch(train_scens, t_obs=w_flt, as_dataframe=True)
+            X_te_df, y_te, _, _ = extractor.transform_batch(test_scens, t_obs=w_flt, as_dataframe=True)
             names = _resolve_feature_names(X_tr_df)
 
             model = GradientBoostingNadirRegressor(n_estimators=100, learning_rate=0.08, max_depth=4, random_state=self.seed)

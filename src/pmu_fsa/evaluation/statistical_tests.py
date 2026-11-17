@@ -99,6 +99,55 @@ def paired_bootstrap_ci(
     }
 
 
+def holm_adjust_pvalues(p_values: Sequence[float]) -> List[float]:
+    """Apply Holm (1979) step-down FWER adjustment to a family of raw p-values."""
+    m = len(p_values)
+    if m == 0:
+        return []
+    raw = np.clip(np.asarray(p_values, dtype=float), 0.0, 1.0)
+    order = np.argsort(raw, kind="mergesort")
+    adjusted_sorted = np.empty(m, dtype=float)
+    running_max = 0.0
+    for rank_idx, orig_idx in enumerate(order):
+        mult = m - rank_idx
+        val = min(1.0, float(mult * raw[orig_idx]))
+        running_max = max(running_max, val)
+        adjusted_sorted[rank_idx] = running_max
+    adjusted = np.empty(m, dtype=float)
+    adjusted[order] = adjusted_sorted
+    return [float(x) for x in adjusted]
+
+
+def _sign_flip_permutation_pvalue(
+    diff_per_scen: np.ndarray,
+    n_perm: int = 5000,
+    seed: int = 42,
+) -> float:
+    """Two-sided paired sign-flip permutation p-value under H0: E[d_i] = 0 (symmetric d_i)."""
+    d = np.asarray(diff_per_scen, dtype=float).ravel()
+    n = len(d)
+    if n == 0 or not np.any(np.abs(d) > 1e-12):
+        return 1.0
+
+    obs_abs_mean = abs(float(np.mean(d)))
+    if obs_abs_mean <= 1e-15:
+        return 1.0
+
+    # Exact enumeration for small paired sample sizes; Monte Carlo Rademacher flips otherwise
+    if n <= 16:
+        bits = ((np.arange(1 << n, dtype=np.uint32)[:, None] >> np.arange(n, dtype=np.uint32)) & 1)
+        signs = np.where(bits == 1, 1.0, -1.0)
+        null_abs_means = np.abs((signs @ d) / float(n))
+        return float(np.mean(null_abs_means >= obs_abs_mean - 1e-15))
+
+    m = max(1000, int(n_perm))
+    rng = np.random.default_rng(seed)
+    signs = rng.choice(np.array([-1.0, 1.0], dtype=float), size=(m, n))
+    null_abs_means = np.abs((signs @ d) / float(n))
+    exceed = int(np.sum(null_abs_means >= obs_abs_mean - 1e-15))
+    return float((1 + exceed) / (1 + m))
+
+
 def paired_model_comparison_test(
     y_true: Any,
     pred_a: Any,
@@ -108,11 +157,13 @@ def paired_model_comparison_test(
     confidence_level: float = 0.95,
     seed: int = 42,
 ) -> Dict[str, Any]:
-    """Compare Model A vs Model B on identical held-out scenarios via Wilcoxon and paired bootstrap.
+    """Compare Model A vs Model B on identical held-out scenarios via paired sign-flip permutation,
+    null-centered paired bootstrap, and separate Wilcoxon signed-rank diagnostic.
 
-    For `task="regression"`, compares per-scenario absolute error |y - pred| (negative delta = Model A lower MAE).
-    For `task="classification"`, `pred_a` and `pred_b` are P(secure) in [0, 1] and per-scenario Brier
-    loss (p - y)^2 is tested via Wilcoxon alongside paired bootstrap differences in Brier, ECE, and F1.
+    Primary test: two-sided paired sign-flip permutation test on scenario loss differences
+    d_i = loss_i(A) - loss_i(B) under H0: E[d_i] = 0 (negative delta = Model A lower loss).
+    Wilcoxon signed-rank is reported separately as a rank-symmetry diagnostic and is never
+    combined via an unadjusted OR rule.
     """
     yt = np.asarray(y_true, dtype=float).ravel()
     pa = np.asarray(pred_a, dtype=float).ravel()
@@ -125,14 +176,20 @@ def paired_model_comparison_test(
         return {
             "n_samples": 0,
             "metric_name": "mae" if task == "regression" else "brier_score",
+            "direction": "lower_is_better",
             "model_a_estimate": 0.0,
             "model_b_estimate": 0.0,
             "delta_a_minus_b": 0.0,
             "ci_low": 0.0,
             "ci_high": 0.0,
-            "p_value_wilcoxon": 1.0,
+            "test_statistic_mean_diff": 0.0,
+            "wilcoxon_statistic": 0.0,
+            "p_value_permutation": 1.0,
             "p_value_bootstrap": 1.0,
+            "p_value_wilcoxon": 1.0,
             "significant_at_005": False,
+            "test_disagreement_note": "none",
+            "practical_significance": "none",
         }
 
     if task == "regression":
@@ -150,47 +207,85 @@ def paired_model_comparison_test(
 
     est_a = float(metric_fn(yt, pa))
     est_b = float(metric_fn(yt, pb))
-    delta_obs = est_a - est_b
-
+    delta_obs = float(est_a - est_b)
     diff_per_scen = loss_a - loss_b
+
     if n >= 5 and np.any(np.abs(diff_per_scen) > 1e-12):
         try:
-            _, p_wilcoxon = wilcoxon(loss_a, loss_b, zero_method="wilcox", alternative="two-sided")
+            w_stat, p_wilcoxon = wilcoxon(loss_a, loss_b, zero_method="wilcox", alternative="two-sided")
+            w_stat = float(w_stat)
             p_wilcoxon = float(p_wilcoxon)
         except Exception:
-            p_wilcoxon = 1.0
+            w_stat, p_wilcoxon = 0.0, 1.0
     else:
-        p_wilcoxon = 1.0
+        w_stat, p_wilcoxon = 0.0, 1.0
 
-    if n < 2 or n_boot < 1:
-        ci_low, ci_high, p_boot = delta_obs, delta_obs, 1.0
+    p_perm = _sign_flip_permutation_pvalue(
+        diff_per_scen, n_perm=max(5000, int(n_boot) * 2), seed=seed + 10007
+    )
+
+    if n < 2 or n_boot < 1 or not np.any(np.abs(diff_per_scen) > 1e-12):
+        ci_low, ci_high = delta_obs, delta_obs
+        p_boot = 1.0 if not np.any(np.abs(diff_per_scen) > 1e-12) else p_perm
     else:
         rng = np.random.default_rng(seed)
-        boot_deltas = np.empty(int(n_boot), dtype=float)
-        for b in range(int(n_boot)):
-            idx = rng.integers(0, n, size=n)
-            boot_deltas[b] = metric_fn(yt[idx], pa[idx]) - metric_fn(yt[idx], pb[idx])
+        m_boot = int(n_boot)
+        idx_mat = rng.integers(0, n, size=(m_boot, n))
+        boot_deltas = np.mean(diff_per_scen[idx_mat], axis=1)
 
         alpha = 1.0 - float(confidence_level)
         ci_low = float(np.percentile(boot_deltas, 100.0 * (0.5 * alpha)))
         ci_high = float(np.percentile(boot_deltas, 100.0 * (1.0 - 0.5 * alpha)))
 
-        # Two-sided paired bootstrap p-value via shifted null / tail-sign probability
-        prop_pos = float(np.mean(boot_deltas >= 0.0))
-        prop_neg = float(np.mean(boot_deltas <= 0.0))
-        p_boot = float(min(1.0, 2.0 * min(prop_pos, prop_neg)))
+        # Null-centered bootstrap p-value under H0: E[d_i] = 0
+        centered_d = diff_per_scen - np.mean(diff_per_scen)
+        null_boot_abs = np.abs(np.mean(centered_d[idx_mat], axis=1))
+        exceed_boot = int(np.sum(null_boot_abs >= abs(delta_obs) - 1e-15))
+        p_boot = float((1 + exceed_boot) / (1 + m_boot))
+
+    sig_primary = bool(p_perm < 0.05)
+    sig_wilcox = bool(p_wilcoxon < 0.05)
+    if sig_primary != sig_wilcox:
+        disagreement = (
+            "Wilcoxon tests rank symmetry of non-zero differences (sensitive to many tiny probability/residual "
+            "offsets vs rare large errors), whereas primary sign-flip permutation tests mean loss difference E[d_i]=0."
+        )
+    else:
+        disagreement = "consistent"
+
+    abs_delta = abs(delta_obs)
+    if task == "regression":
+        if abs_delta >= 0.020:
+            prac = "material (>=20 mHz MAE difference)"
+        elif abs_delta >= 0.005:
+            prac = "moderate (5-20 mHz MAE difference)"
+        else:
+            prac = "negligible (<5 mHz; below typical PMU frequency noise floor)"
+    else:
+        if abs_delta >= 0.010:
+            prac = "material (>=0.010 Brier difference)"
+        elif abs_delta >= 0.002:
+            prac = "small (0.002-0.010 Brier difference)"
+        else:
+            prac = "negligible (<0.002 Brier difference)"
 
     return {
         "n_samples": n,
         "metric_name": metric_name,
+        "direction": "lower_is_better",
         "model_a_estimate": est_a,
         "model_b_estimate": est_b,
         "delta_a_minus_b": delta_obs,
         "ci_low": ci_low,
         "ci_high": ci_high,
-        "p_value_wilcoxon": p_wilcoxon,
+        "test_statistic_mean_diff": delta_obs,
+        "wilcoxon_statistic": w_stat,
+        "p_value_permutation": p_perm,
         "p_value_bootstrap": p_boot,
-        "significant_at_005": bool(p_wilcoxon < 0.05 or p_boot < 0.05),
+        "p_value_wilcoxon": p_wilcoxon,
+        "significant_at_005": sig_primary,
+        "test_disagreement_note": disagreement,
+        "practical_significance": prac,
     }
 
 
@@ -202,12 +297,18 @@ def compare_all_models_statistical(
     n_boot: int = 1000,
     seed: int = 42,
 ) -> pd.DataFrame:
-    """Compare a reference model against every baseline model on identical held-out targets."""
+    """Compare a reference model against every baseline model on identical held-out targets
+    with Holm step-down multiple-comparison adjustment across the comparison family.
+    """
     if reference_model not in predictions:
         raise KeyError(f"Reference model '{reference_model}' not found in predictions dict")
 
     ref_pred = predictions[reference_model]
+    yt_arr = np.asarray(y_true, dtype=float).ravel()
     rows: List[Dict[str, Any]] = []
+    non_ref_indices: List[int] = []
+    raw_perm_pvals: List[float] = []
+
     for idx, (name, pred) in enumerate(predictions.items()):
         if name == reference_model:
             ci = paired_bootstrap_ci(
@@ -220,15 +321,24 @@ def compare_all_models_statistical(
             rows.append({
                 "reference_model": reference_model,
                 "baseline_model": name,
+                "n_paired": int(len(yt_arr)),
                 "metric": "mae" if task == "regression" else "brier_score",
+                "direction": "lower_is_better",
                 "reference_score": round(ci["estimate"], 5),
                 "baseline_score": round(ci["estimate"], 5),
                 "delta_ref_minus_base": 0.0,
                 "ci95_low": 0.0,
                 "ci95_high": 0.0,
-                "p_value_wilcoxon": 1.0,
+                "test_statistic": 0.0,
+                "p_value_permutation": 1.0,
+                "p_holm_adjusted": 1.0,
                 "p_value_bootstrap": 1.0,
+                "p_value_wilcoxon": 1.0,
+                "significant_unadjusted_005": False,
+                "significant_holm_005": False,
                 "significant_p005": False,
+                "practical_significance": "self_reference",
+                "test_disagreement_note": "self_reference",
             })
             continue
 
@@ -240,19 +350,39 @@ def compare_all_models_statistical(
             n_boot=n_boot,
             seed=seed + idx + 1,
         )
+        non_ref_indices.append(len(rows))
+        raw_perm_pvals.append(float(comp["p_value_permutation"]))
         rows.append({
             "reference_model": reference_model,
             "baseline_model": name,
+            "n_paired": int(comp["n_samples"]),
             "metric": comp["metric_name"],
+            "direction": comp["direction"],
             "reference_score": round(comp["model_a_estimate"], 5),
             "baseline_score": round(comp["model_b_estimate"], 5),
             "delta_ref_minus_base": round(comp["delta_a_minus_b"], 5),
             "ci95_low": round(comp["ci_low"], 5),
             "ci95_high": round(comp["ci_high"], 5),
-            "p_value_wilcoxon": round(comp["p_value_wilcoxon"], 6),
+            "test_statistic": round(comp["test_statistic_mean_diff"], 5),
+            "p_value_permutation": round(comp["p_value_permutation"], 6),
+            "p_holm_adjusted": 1.0,
             "p_value_bootstrap": round(comp["p_value_bootstrap"], 6),
-            "significant_p005": comp["significant_at_005"],
+            "p_value_wilcoxon": round(comp["p_value_wilcoxon"], 6),
+            "significant_unadjusted_005": bool(comp["significant_at_005"]),
+            "significant_holm_005": False,
+            "significant_p005": False,
+            "practical_significance": comp["practical_significance"],
+            "test_disagreement_note": comp["test_disagreement_note"],
         })
+
+    if non_ref_indices:
+        holm_pvals = holm_adjust_pvalues(raw_perm_pvals)
+        for row_idx, p_adj in zip(non_ref_indices, holm_pvals):
+            rows[row_idx]["p_holm_adjusted"] = round(float(p_adj), 6)
+            sig_holm = bool(p_adj < 0.05)
+            rows[row_idx]["significant_holm_005"] = sig_holm
+            rows[row_idx]["significant_p005"] = sig_holm
+
     return pd.DataFrame(rows)
 
 

@@ -1,0 +1,9 @@
+============================================================
+PMU-FSA 50 Hz E2E Test Runner: Tier ALL
+Found 9 test file(s) to execute.
+============================================================
+
+============================================================
+Results: 149/149 passed (0 failed, 0 skipped) in 63.42s
+============================================================
+Markdown report written to: /Users/akshat/Desktop/btp-early-pmu-fsa/reports/final_audit/reproduction_e2e_report.md

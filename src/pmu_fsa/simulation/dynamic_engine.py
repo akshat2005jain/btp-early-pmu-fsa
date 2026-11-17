@@ -591,6 +591,8 @@ class DynamicSimulator:
             state_eff = state.copy()
             state_eff[self.n_gen + trip_gen_idx] = 0.0
             state_eff[2 * self.n_gen + trip_gen_idx] = 0.0
+            if self.has_ren_droop and len(state_eff) > 3 * self.n_gen + trip_gen_idx:
+                state_eff[3 * self.n_gen + trip_gen_idx] = 0.0
             return self._rhs_segment(
                 state_eff,
                 Y_red_seg=Y_red_post,

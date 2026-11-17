@@ -1,0 +1,37 @@
+........................................................................ [ 30%]
+........................................................................ [ 60%]
+........................................................................ [ 91%]
+.....................                                                    [100%]
+=============================== warnings summary ===============================
+tests/e2e/test_tier2_boundaries.py::test_t2_isotonic_regression_constant_target
+  /Users/akshat/Desktop/btp-early-pmu-fsa/tests/e2e/test_tier2_boundaries.py:327: UserWarning: Calibration dataset size N_cal=4 < 30 is too small for Isotonic regression; falling back to Platt scaling to prevent step-function overfitting.
+    clf.fit([[0.1], [0.2], [0.3], [0.4]], [49.6, 49.6, 49.6, 49.6])
+
+tests/e2e/test_tier2_boundaries.py::test_t2_isotonic_regression_constant_target
+  /Users/akshat/Desktop/btp-early-pmu-fsa/tests/e2e/test_tier2_boundaries.py:327: UserWarning: Calibration data has insufficient classes (<2), zero variance, or insufficient samples (<2); falling back to physics default (A=8.0, B=-threshold*8.0).
+    clf.fit([[0.1], [0.2], [0.3], [0.4]], [49.6, 49.6, 49.6, 49.6])
+
+tests/e2e/test_tier2_boundaries.py::test_t2_window_sensitivity_exceeding_trajectory_length
+  /Users/akshat/Desktop/btp-early-pmu-fsa/tests/e2e/test_tier2_boundaries.py:411: UserWarning: Observation window [1.0000s, 17.0000s] reaches or exceeds nadir time 3.2800s. Pre-nadir causality warning.
+    w = extract_causal_window(sample_pmu_trajectory, t_obs=max_t + 10.0)
+
+tests/e2e/test_tier5_adversarial_models_eval.py::test_t5_cal_pava_sigmoid_degenerate_fallback_and_interval_ordering
+  /Users/akshat/Desktop/btp-early-pmu-fsa/tests/e2e/test_tier5_adversarial_models_eval.py:201: UserWarning: Platt scaling optimization yielded non-positive slope A=-0.0000 <= 0; falling back to physics default (A=8.0, B=-threshold*8.0).
+    clf_ci = CalibratedGBDTClassifier(method="platt", threshold=49.50).fit(X_tr, y_tr)
+
+tests/e2e/test_tier5_adversarial_models_eval.py::test_t5_benchmarks_edge_cases
+tests/e2e/test_tier5_adversarial_models_eval.py::test_t5_benchmarks_edge_cases
+  /Users/akshat/Desktop/btp-early-pmu-fsa/src/pmu_fsa/evaluation/sensitivity.py:369: UserWarning: Calibration data has insufficient classes (<2), zero variance, or insufficient samples (<2); falling back to physics default (A=8.0, B=-threshold*8.0).
+    clf.fit(X_train, y_train, ys_train)
+
+tests/test_adversarial_sim_features.py::test_probe_window_slicer_extremes
+  /Users/akshat/Desktop/btp-early-pmu-fsa/tests/test_adversarial_sim_features.py:199: UserWarning: Observation window [1.0000s, 7.0000s] reaches or exceeds nadir time 2.5000s. Pre-nadir causality warning.
+    w_trunc = extract_causal_window(scenario_mock, t_obs=6.0)
+
+tests/test_benchmarks.py::TestIsolatedPipelineAndCLIEntrypoints::test_pipeline_end_to_end_and_deterministic_seed_isolated
+tests/test_benchmarks.py::TestIsolatedPipelineAndCLIEntrypoints::test_pipeline_end_to_end_and_deterministic_seed_isolated
+  /Users/akshat/Desktop/btp-early-pmu-fsa/src/pmu_fsa/pipeline/run_experiments.py:378: UserWarning: Calibration dataset size N_cal=9 < 30 is too small for Isotonic regression; falling back to Platt scaling to prevent step-function overfitting.
+    iso_clf.fit(X_tr, yn_tr, ys_tr, X_cal=X_va, y_cal=yn_va)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+237 passed, 9 warnings in 172.23s (0:02:52)

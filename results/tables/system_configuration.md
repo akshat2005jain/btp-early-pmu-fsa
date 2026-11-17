@@ -1,0 +1,12 @@
+| Parameter | Value | Source |
+| --- | --- | --- |
+| Nominal System Frequency (f0) | 50.0 Hz | CERC IEGC 2023 / ieee39_data.py |
+| Benchmark Network | IEEE 39-Bus, 10-Machine (New England) | Athay et al. (1979) |
+| System MVA Base | 100.0 MVA | ieee39_data.py |
+| Base Generation / Load (load_scale=1.0) | 6192.80 MW / 6150.10 MW | solve_power_flow() |
+| Slack Bus | Bus 31 (Gen 2, V=0.982 pu, theta=0 deg) | GENERATOR_DATA |
+| Bus 39 Equivalent (macro_intertie=False) | Regional plant H_39=42.0 s on 100 MVA base (H_tot=324.7 s) | configs/default_50hz.yaml / ieee39_data.py |
+| Renewable Representation | Approach B: Co-located GFL inertia/damping/droop derating | renewables.py |
+| Governor & Converter Droop | Sync 5% droop (Tg=4.20 s) active; GFL converter droop disabled (enable_droop=False) | dynamic_engine.py / renewables.py |
+| PMU Reporting Rate & ROCOF | 50 fps (dt=20 ms), area-weighted f_sys_pmu & causal 5-point backward OLS ROCOF | pmu_recorder.py |
+| Contingency Security Threshold | 49.50 Hz (100 mHz above 49.40 Hz UFLS Stage-1) | CERC IEGC 2023 |

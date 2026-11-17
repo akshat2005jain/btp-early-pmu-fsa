@@ -1,12 +1,12 @@
 # IEEE 39-Bus PMU-FSA Dataset Quality & Causality Validation Report
 
-- **Generated (UTC)**: `2026-11-17T13:40:28.902520+00:00`
+- **Generated (UTC)**: `2026-11-17T20:01:49.171010+00:00`
 - **Overall Validation Status**: **PASS**
 - **Total Scenarios**: `750`
 - **Nominal Frequency / Threshold**: `50.0 Hz` / `49.5 Hz`
-- **Raw PMU Directory**: `/Users/akshat/Desktop/btp-early-pmu-fsa/data/raw`
-- **Raw Simulation Directory**: `/Users/akshat/Desktop/btp-early-pmu-fsa/data/raw_sim`
-- **Processed Feature Directory**: `/Users/akshat/Desktop/btp-early-pmu-fsa/data/processed`
+- **Raw PMU Directory**: `data/raw`
+- **Raw Simulation Directory**: `data/raw_sim`
+- **Processed Feature Directory**: `data/processed`
 - **Aggregate Dataset SHA-256**: `b543ffc51c757ddc36437391eced8df375de0ac793141e80a6e3b9be2aeaab11`
 
 ## 1. Scenario-Level Partition & Class Balance Summary
@@ -62,4 +62,4 @@
 
 - **Nadir Range (Hz)**: `[48.2556, 49.9109]` (Mean: `49.3694 Hz`, Median: `49.4223 Hz`)
 - **Time-to-Nadir Range (s)**: `[2.78, 3.7]` (Median: `3.28 s`)
-- **Manifest File**: `/Users/akshat/Desktop/btp-early-pmu-fsa/data/manifest.json`
+- **Manifest File**: `data/manifest.json`

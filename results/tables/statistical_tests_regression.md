@@ -1,9 +1,9 @@
-| reference_model | baseline_model | metric | reference_score | baseline_score | delta_ref_minus_base | ci95_low | ci95_high | p_value_wilcoxon | p_value_bootstrap | significant_p005 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| gbdt | mean | mae | 0.0077 | 0.2104 | -0.2027 | -0.2420 | -0.1645 | 0.0000 | 0.0000 | True |
-| gbdt | analytical | mae | 0.0077 | 0.0042 | 0.0035 | 0.0017 | 0.0056 | 0.0001 | 0.0000 | True |
-| gbdt | linear | mae | 0.0077 | 0.0034 | 0.0043 | 0.0026 | 0.0065 | 0.0000 | 0.0000 | True |
-| gbdt | dt | mae | 0.0077 | 0.0111 | -0.0034 | -0.0054 | -0.0015 | 0.0042 | 0.0000 | True |
-| gbdt | rf | mae | 0.0077 | 0.0091 | -0.0013 | -0.0027 | -0.0000 | 0.0956 | 0.0440 | True |
-| gbdt | gbdt | mae | 0.0077 | 0.0077 | 0.0000 | 0.0000 | 0.0000 | 1.0000 | 1.0000 | False |
-| gbdt | lgbm | mae | 0.0077 | 0.0086 | -0.0009 | -0.0028 | 0.0010 | 0.0594 | 0.3080 | False |
+| reference_model | baseline_model | n_paired | metric | direction | reference_score | baseline_score | delta_ref_minus_base | ci95_low | ci95_high | test_statistic | p_value_permutation | p_holm_adjusted | p_value_bootstrap | p_value_wilcoxon | significant_unadjusted_005 | significant_holm_005 | significant_p005 | practical_significance | test_disagreement_note |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| gbdt | mean | 52 | mae | lower_is_better | 0.0077 | 0.2104 | -0.2027 | -0.2413 | -0.1672 | -0.2027 | 0.0002 | 0.0012 | 0.0005 | 0.0000 | True | True | True | material (>=20 mHz MAE difference) | consistent |
+| gbdt | analytical | 52 | mae | lower_is_better | 0.0077 | 0.0042 | 0.0035 | 0.0017 | 0.0056 | 0.0035 | 0.0004 | 0.0016 | 0.0010 | 0.0001 | True | True | True | negligible (<5 mHz; below typical PMU frequency noise floor) | consistent |
+| gbdt | linear | 52 | mae | lower_is_better | 0.0077 | 0.0034 | 0.0043 | 0.0025 | 0.0065 | 0.0043 | 0.0002 | 0.0012 | 0.0005 | 0.0000 | True | True | True | negligible (<5 mHz; below typical PMU frequency noise floor) | consistent |
+| gbdt | dt | 52 | mae | lower_is_better | 0.0077 | 0.0111 | -0.0034 | -0.0053 | -0.0015 | -0.0034 | 0.0014 | 0.0042 | 0.0005 | 0.0042 | True | True | True | negligible (<5 mHz; below typical PMU frequency noise floor) | consistent |
+| gbdt | rf | 52 | mae | lower_is_better | 0.0077 | 0.0091 | -0.0013 | -0.0028 | 0.0000 | -0.0013 | 0.0710 | 0.1420 | 0.0645 | 0.0956 | False | False | False | negligible (<5 mHz; below typical PMU frequency noise floor) | consistent |
+| gbdt | gbdt | 52 | mae | lower_is_better | 0.0077 | 0.0077 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | False | False | False | self_reference | self_reference |
+| gbdt | lgbm | 52 | mae | lower_is_better | 0.0077 | 0.0086 | -0.0009 | -0.0028 | 0.0010 | -0.0009 | 0.3769 | 0.3769 | 0.3648 | 0.0594 | False | False | False | negligible (<5 mHz; below typical PMU frequency noise floor) | consistent |

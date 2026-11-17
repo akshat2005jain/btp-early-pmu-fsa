@@ -4,13 +4,65 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import platform
+import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+FEATURE_SCHEMA_VERSION = "2.0.0"
+
+
+def _get_git_commit() -> str:
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(Path(__file__).resolve().parent.parent),
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+        )
+        return out.decode("utf-8").strip()
+    except Exception:
+        return "unknown"
+
+
+def _attach_artifact_metadata(
+    estimator: Any,
+    model_key: str,
+    selection_role: str,
+    feature_names: List[str],
+    seed: int,
+    threshold: float,
+    partition_counts: Dict[str, int],
+    git_commit: str,
+    dataset_sha256: str,
+    hyperparameters: Optional[Dict[str, Any]] = None,
+) -> Any:
+    estimator.artifact_metadata_ = {
+        "model_key": model_key,
+        "selection_role": selection_role,
+        "feature_schema_version": FEATURE_SCHEMA_VERSION,
+        "n_features": len(feature_names),
+        "feature_names": list(feature_names),
+        "seed": int(seed),
+        "threshold_hz": float(threshold),
+        "partition_counts": dict(partition_counts),
+        "git_commit": git_commit,
+        "dataset_sha256": dataset_sha256,
+        "hyperparameters": dict(hyperparameters or {}),
+        "software_versions": {
+            "python": sys.version.split()[0],
+            "numpy": np.__version__,
+            "scipy": scipy.__version__,
+            "scikit_learn": sklearn.__version__,
+            "pandas": pd.__version__,
+        },
+    }
+    return estimator
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT / "src") not in sys.path:
@@ -333,8 +385,19 @@ def main(args=None) -> int:
 
     reg_rows: List[Dict[str, Any]] = []
     clf_rows: List[Dict[str, Any]] = []
+    model_cfg_rows: List[Dict[str, Any]] = []
+    cal_comp_rows: List[Dict[str, Any]] = []
     trained_reg_objects: Dict[str, Any] = {}
     trained_clf_objects: Dict[str, Any] = {}
+
+    git_commit = _get_git_commit()
+    feat_sha256 = hashlib.sha256(feat_path.read_bytes()).hexdigest() if feat_path.exists() else "unknown"
+    part_counts = {
+        "train": int(len(idx_train)),
+        "val": int(len(idx_val)),
+        "test": int(len(idx_test)),
+        "ood_test": int(np.sum(ood_mask)),
+    }
 
     # Combined train+val pool used ONLY after validation selection for equalized final model refit
     use_full_pool = (not parsed.strict_disjoint_cal) and (X_val_df is not None and len(X_val_df) >= 2)
@@ -381,9 +444,10 @@ def main(args=None) -> int:
                 "mae_ci95": [round(ci_low, 4), round(ci_high, 4)],
                 "infer_ms": round(infer_ms, 4),
             }
+            v_mae_val = round(val_metrics_reg[m_type].get("mae", float("nan")), 4) if val_metrics_reg[m_type] else float("nan")
             reg_rows.append({
                 "Model": disp,
-                "Val MAE (Hz)": round(val_metrics_reg[m_type].get("mae", float("nan")), 4) if val_metrics_reg[m_type] else float("nan"),
+                "Val MAE (Hz)": v_mae_val,
                 "MAE (Hz)": round(t_eval["mae"], 4),
                 "RMSE (Hz)": round(t_eval["rmse"], 4),
                 "Bias (Hz)": round(t_eval["bias"], 4),
@@ -393,19 +457,43 @@ def main(args=None) -> int:
                 "95% Bootstrap CI (Hz)": f"[{ci_low:.4f}, {ci_high:.4f}]",
                 "Inference (ms/scen)": round(infer_ms, 4),
             })
+            role = "proposed_nonlinear_regressor" if m_type == "gbdt" else "baseline_regressor"
+            _attach_artifact_metadata(
+                reg_final,
+                model_key=m_type,
+                selection_role=role,
+                feature_names=feature_names,
+                seed=parsed.seed,
+                threshold=parsed.threshold,
+                partition_counts=part_counts,
+                git_commit=git_commit,
+                dataset_sha256=feat_sha256,
+                hyperparameters=hp,
+            )
+            model_cfg_rows.append({
+                "Task": "Regression",
+                "Key": m_type,
+                "Display_Name": disp,
+                "Role": role,
+                "Hyperparameters": json.dumps(hp, sort_keys=True),
+                "Fit_Pool": "train+val (N=218)" if use_full_pool else f"train (N={len(idx_train)})",
+                "Val_Primary_Metric": f"MAE={v_mae_val:.4f}" if not np.isnan(v_mae_val) else "-",
+                "ID_Test_Primary_Metric": f"MAE={t_eval['mae']:.4f}",
+            })
             trained_reg_objects[m_type] = reg_final
             joblib.dump(reg_final, out_dir / f"{m_type}.joblib")
 
         elif m_type == "calibrated_gb":
             if parsed.model_type == "all":
                 base_clf_builders = [
-                    ("Logistic Regression", "logistic_clf", lambda: LogisticSecurityClassifier(threshold=parsed.threshold, random_state=parsed.seed)),
-                    ("Decision Tree", "dt_clf", lambda: DecisionTreeSecurityClassifier(threshold=parsed.threshold, max_depth=5, random_state=parsed.seed)),
-                    ("Random Forest", "rf_clf", lambda: RandomForestSecurityClassifier(threshold=parsed.threshold, n_estimators=100, max_depth=10, random_state=parsed.seed)),
-                    ("Uncalibrated GBDT", "gbdt_clf", lambda: GradientBoostingSecurityClassifier(threshold=parsed.threshold, n_estimators=100, learning_rate=0.08, max_depth=4, random_state=parsed.seed)),
-                    ("LightGBM Classifier", "lgbm_clf", lambda: LightGBMSecurityClassifier(threshold=parsed.threshold, n_estimators=100, learning_rate=0.08, num_leaves=15, random_state=parsed.seed)),
+                    ("Logistic Regression", "logistic_clf", {"C": 1.0}, lambda: LogisticSecurityClassifier(threshold=parsed.threshold, random_state=parsed.seed)),
+                    ("Decision Tree", "dt_clf", {"max_depth": 5}, lambda: DecisionTreeSecurityClassifier(threshold=parsed.threshold, max_depth=5, random_state=parsed.seed)),
+                    ("Random Forest", "rf_clf", {"n_estimators": 100, "max_depth": 10}, lambda: RandomForestSecurityClassifier(threshold=parsed.threshold, n_estimators=100, max_depth=10, random_state=parsed.seed)),
+                    ("Uncalibrated GBDT", "gbdt_clf", {"n_estimators": 100, "learning_rate": 0.08, "max_depth": 4}, lambda: GradientBoostingSecurityClassifier(threshold=parsed.threshold, n_estimators=100, learning_rate=0.08, max_depth=4, random_state=parsed.seed)),
+                    ("LightGBM Classifier", "lgbm_clf", {"n_estimators": 100, "learning_rate": 0.08, "num_leaves": 15}, lambda: LightGBMSecurityClassifier(threshold=parsed.threshold, n_estimators=100, learning_rate=0.08, num_leaves=15, random_state=parsed.seed)),
                 ]
-                for disp_c, key_c, fn_c in base_clf_builders:
+                for disp_c, key_c, hp_c, fn_c in base_clf_builders:
+                    hyperparams_record[key_c] = hp_c
                     # Validation pass (strictly fit on train, evaluated on val)
                     if X_val_df is not None and len(X_val_df) > 0:
                         clf_v = fn_c().fit(X_train_df, y_train_sec)
@@ -426,10 +514,11 @@ def main(args=None) -> int:
                     c_eval = clf_obj.evaluate(X_test_df, y_test_sec)
                     c_probs = clf_obj.predict_proba(X_test_df)[:, 1]
                     c_cal = compute_calibration_metrics(y_test_sec, c_probs, n_bins=10, threshold=parsed.threshold)
+                    vb_c = val_metrics_clf[key_c].get("brier_score", float("nan"))
 
                     row_c = {
                         "Model": disp_c,
-                        "Val Brier": val_metrics_clf[key_c].get("brier_score", float("nan")),
+                        "Val Brier": vb_c,
                         "Precision": round(c_eval["precision"], 4),
                         "Recall": round(c_eval["recall"], 4),
                         "F1": round(c_eval["f1"], 4),
@@ -445,12 +534,51 @@ def main(args=None) -> int:
                     }
                     clf_rows.append(row_c)
                     test_metrics_clf[key_c] = row_c
+                    _attach_artifact_metadata(
+                        clf_obj,
+                        model_key=key_c,
+                        selection_role="baseline_classifier",
+                        feature_names=feature_names,
+                        seed=parsed.seed,
+                        threshold=parsed.threshold,
+                        partition_counts=part_counts,
+                        git_commit=git_commit,
+                        dataset_sha256=feat_sha256,
+                        hyperparameters=hp_c,
+                    )
+                    model_cfg_rows.append({
+                        "Task": "Classification",
+                        "Key": key_c,
+                        "Display_Name": disp_c,
+                        "Role": "baseline_classifier",
+                        "Hyperparameters": json.dumps(hp_c, sort_keys=True),
+                        "Fit_Pool": "train+val (N=218)" if use_full_pool else f"train (N={len(idx_train)})",
+                        "Val_Primary_Metric": f"Brier={vb_c:.4f}" if not np.isnan(vb_c) else "-",
+                        "ID_Test_Primary_Metric": f"Brier={c_cal['brier_score']:.4f}",
+                    })
+                    if key_c == "gbdt_clf":
+                        cal_comp_rows.append({
+                            "Model": disp_c,
+                            "Calibration_Method": "uncalibrated",
+                            "Calibration_Protocol": "direct_gbdt_deviance",
+                            "N_Cal": 0,
+                            "Val_Brier": vb_c,
+                            "Val_ECE": val_metrics_clf[key_c].get("ece", float("nan")),
+                            "Test_Brier": round(c_cal["brier_score"], 4),
+                            "Test_ECE": round(c_cal["ece"], 4),
+                            "Test_MCE": round(c_cal["mce"], 4),
+                            "Test_F1": round(c_eval["f1"], 4),
+                            "Test_FNR_Insecure": round(c_eval["fnr_insecure"], 4),
+                            "Fallback_Used": False,
+                        })
                     trained_clf_objects[key_c] = clf_obj
                     joblib.dump(clf_obj, out_dir / f"{key_c}.joblib")
 
             cal_methods = ["platt", "isotonic"] if parsed.model_type == "all" else [parsed.calibration]
             for cal_m in cal_methods:
                 key_cal = f"calibrated_gb_{'iso' if cal_m == 'isotonic' else 'platt'}"
+                hp_cal = {"method": cal_m, "n_estimators": 100, "learning_rate": 0.08, "max_depth": 4, "cv_folds": 5}
+                hyperparams_record[key_cal] = hp_cal
                 # Validation evaluation (fit on train with OOF calibration, evaluate strictly out-of-sample on val)
                 if X_val_df is not None and len(X_val_df) > 0:
                     cal_val_obj = CalibratedGBDTClassifier(
@@ -475,8 +603,7 @@ def main(args=None) -> int:
                 else:
                     val_metrics_clf[key_cal] = {}
 
-                # Final calibrated GBDT: when X_val is present & use_full_pool=True, cross-fits Platt/Isotonic
-                # across train+val via 5-fold OOF and refits base GBDT on train+val (equal sample budget to baselines!)
+                # Final calibrated GBDT: cross-fits Platt/Isotonic across train+val via 5-fold OOF (zero test exposure!)
                 cal_final = CalibratedGBDTClassifier(
                     method=cal_m,
                     threshold=parsed.threshold,
@@ -506,9 +633,10 @@ def main(args=None) -> int:
                 if cal_final.fallback_used_:
                     disp_label += f" [fallback->{cal_final.effective_method_}]"
 
+                vb_cal = val_metrics_clf[key_cal].get("brier_score", float("nan"))
                 row_cal = {
                     "Model": disp_label,
-                    "Val Brier": val_metrics_clf[key_cal].get("brier_score", float("nan")),
+                    "Val Brier": vb_cal,
                     "Precision": round(ev_te["precision"], 4),
                     "Recall": round(ev_te["recall"], 4),
                     "F1": round(ev_te["f1"], 4),
@@ -535,12 +663,60 @@ def main(args=None) -> int:
                     "platt_a": round(float(cal_final.platt_a), 5),
                     "platt_b": round(float(cal_final.platt_b), 5),
                 }
+                _attach_artifact_metadata(
+                    cal_final,
+                    model_key=key_cal,
+                    selection_role="proposed_calibrated_classifier",
+                    feature_names=feature_names,
+                    seed=parsed.seed,
+                    threshold=parsed.threshold,
+                    partition_counts=part_counts,
+                    git_commit=git_commit,
+                    dataset_sha256=feat_sha256,
+                    hyperparameters=hp_cal,
+                )
+                model_cfg_rows.append({
+                    "Task": "Classification",
+                    "Key": key_cal,
+                    "Display_Name": disp_label,
+                    "Role": "proposed_calibrated_classifier",
+                    "Hyperparameters": json.dumps(hp_cal, sort_keys=True),
+                    "Fit_Pool": cal_final.calibration_protocol_,
+                    "Val_Primary_Metric": f"Brier={vb_cal:.4f}" if not np.isnan(vb_cal) else "-",
+                    "ID_Test_Primary_Metric": f"Brier={cal_te['brier_score']:.4f}",
+                })
+                cal_comp_rows.append({
+                    "Model": disp_label,
+                    "Calibration_Method": cal_final.effective_method_,
+                    "Calibration_Protocol": cal_final.calibration_protocol_,
+                    "N_Cal": int(cal_final.n_cal_),
+                    "Val_Brier": vb_cal,
+                    "Val_ECE": val_metrics_clf[key_cal].get("ece", float("nan")),
+                    "Test_Brier": round(cal_te["brier_score"], 4),
+                    "Test_ECE": round(cal_te["ece"], 4),
+                    "Test_MCE": round(cal_te["mce"], 4),
+                    "Test_F1": round(ev_te["f1"], 4),
+                    "Test_FNR_Insecure": round(ev_te["fnr_insecure"], 4),
+                    "Fallback_Used": bool(cal_final.fallback_used_),
+                })
                 trained_clf_objects[key_cal] = cal_final
                 joblib.dump(cal_final, out_dir / f"{key_cal}.joblib")
-                if cal_m == "isotonic":
-                    joblib.dump(cal_final, out_dir / "calibrated_gb_isotonic.joblib")
 
+            # Remove obsolete duplicate filename if present from earlier runs
+            stale_iso = out_dir / "calibrated_gb_isotonic.joblib"
+            if stale_iso.exists():
+                stale_iso.unlink()
+
+            # Select canonical calibrated_gb via validation Brier when both Platt & Isotonic are evaluated
             primary_cal_key = f"calibrated_gb_{'iso' if parsed.calibration == 'isotonic' else 'platt'}"
+            if parsed.model_type == "all" and val_metrics_clf:
+                cal_cands = {
+                    k: val_metrics_clf[k]["brier_score"]
+                    for k in ("calibrated_gb_platt", "calibrated_gb_iso")
+                    if k in val_metrics_clf and "brier_score" in val_metrics_clf[k] and k in trained_clf_objects
+                }
+                if cal_cands:
+                    primary_cal_key = min(cal_cands, key=cal_cands.get)
             primary_cal_model = trained_clf_objects[primary_cal_key]
             joblib.dump(primary_cal_model, out_dir / "calibrated_gb.joblib")
             test_metrics_clf["calibrated_gb"] = test_metrics_clf[primary_cal_key]
@@ -552,7 +728,10 @@ def main(args=None) -> int:
         if valid_reg_candidates:
             best_reg_key = min(valid_reg_candidates, key=valid_reg_candidates.get)
     if best_reg_key and best_reg_key in trained_reg_objects:
-        joblib.dump(trained_reg_objects[best_reg_key], out_dir / "best_regressor.joblib")
+        best_reg_obj = trained_reg_objects[best_reg_key]
+        best_reg_obj.artifact_metadata_["selection_role"] = "validation_selected_best_regressor"
+        joblib.dump(best_reg_obj, out_dir / "best_regressor.joblib")
+        joblib.dump(best_reg_obj, out_dir / f"{best_reg_key}.joblib")
 
     best_clf_key = "calibrated_gb_platt" if "calibrated_gb_platt" in trained_clf_objects else (next(iter(trained_clf_objects.keys()), None))
     if val_metrics_clf:
@@ -560,7 +739,10 @@ def main(args=None) -> int:
         if valid_clf_candidates:
             best_clf_key = min(valid_clf_candidates, key=valid_clf_candidates.get)
     if best_clf_key and best_clf_key in trained_clf_objects:
-        joblib.dump(trained_clf_objects[best_clf_key], out_dir / "best_classifier.joblib")
+        best_clf_obj = trained_clf_objects[best_clf_key]
+        best_clf_obj.artifact_metadata_["selection_role"] = "validation_selected_best_classifier"
+        joblib.dump(best_clf_obj, out_dir / "best_classifier.joblib")
+        joblib.dump(best_clf_obj, out_dir / f"{best_clf_key}.joblib")
 
     # Subgroup breakdown & probability threshold safety sweep on held-out test
     subgroup_rows: List[Dict[str, Any]] = []
@@ -589,6 +771,16 @@ def main(args=None) -> int:
         df_clf.to_csv(tables_dir / "security_classification.csv", index=False)
         (tables_dir / "security_classification.md").write_text(_df_to_markdown(df_clf), encoding="utf-8")
 
+    if model_cfg_rows:
+        df_mcfg = pd.DataFrame(model_cfg_rows)
+        df_mcfg.to_csv(tables_dir / "model_configurations.csv", index=False)
+        (tables_dir / "model_configurations.md").write_text(_df_to_markdown(df_mcfg), encoding="utf-8")
+
+    if cal_comp_rows:
+        df_cal = pd.DataFrame(cal_comp_rows)
+        df_cal.to_csv(tables_dir / "calibration_comparison.csv", index=False)
+        (tables_dir / "calibration_comparison.md").write_text(_df_to_markdown(df_cal), encoding="utf-8")
+
     if subgroup_rows:
         df_sub = pd.DataFrame(subgroup_rows)
         df_sub.to_csv(tables_dir / "subgroup_performance.csv", index=False)
@@ -601,18 +793,16 @@ def main(args=None) -> int:
 
     primary_cal_info = test_metrics_clf.get("calibrated_gb", {})
     training_metadata: Dict[str, Any] = {
+        "feature_schema_version": FEATURE_SCHEMA_VERSION,
+        "git_commit": git_commit,
+        "features_sha256": feat_sha256,
         "protocol": split_protocol,
         "equalized_train_val_refit": bool(use_full_pool),
         "seed": int(parsed.seed),
         "threshold_hz": float(parsed.threshold),
         "n_features": int(X.shape[1]),
         "feature_names": feature_names,
-        "partition_counts": {
-            "train": int(len(idx_train)),
-            "val": int(len(idx_val)),
-            "test": int(len(idx_test)),
-            "ood_test": int(np.sum(ood_mask)),
-        },
+        "partition_counts": part_counts,
         "train_ids": [str(s) for s in scenario_ids[idx_train]],
         "val_ids": [str(s) for s in scenario_ids[idx_val]],
         "test_ids": [str(s) for s in scenario_ids[idx_test]],
