@@ -1,9 +1,11 @@
-"""IEEE 39-bus dynamic simulation and PMU recording."""
+"""IEEE 39-bus dynamic simulation, PMU recording, scenario generation, and validation."""
 
 from pmu_fsa.simulation.ieee39_data import (
     BASE_MVA,
     NOMINAL_FREQ,
     OMEGA_0,
+    SECURITY_THRESHOLD_HZ,
+    PHYSICAL_FREQ_BOUNDS,
     N_BUSES,
     N_GENERATORS,
     N_BRANCHES,
@@ -41,16 +43,24 @@ from pmu_fsa.simulation.pmu_recorder import (
 )
 from pmu_fsa.simulation.scenario_generator import (
     ScenarioGenerator,
+    classify_ood_regime,
     assign_scenario_partition,
     create_scenario_id,
+    export_raw_and_pmu_scenario,
     export_scenario_to_npz,
     load_scenario_from_npz,
+)
+from pmu_fsa.simulation.dataset_validator import (
+    validate_dataset,
+    write_dataset_quality_report,
 )
 
 __all__ = [
     "BASE_MVA",
     "NOMINAL_FREQ",
     "OMEGA_0",
+    "SECURITY_THRESHOLD_HZ",
+    "PHYSICAL_FREQ_BOUNDS",
     "N_BUSES",
     "N_GENERATORS",
     "N_BRANCHES",
@@ -80,8 +90,38 @@ __all__ = [
     "compute_fir_rocof",
     "compute_crc_ccitt",
     "ScenarioGenerator",
+    "classify_ood_regime",
     "assign_scenario_partition",
     "create_scenario_id",
+    "export_raw_and_pmu_scenario",
     "export_scenario_to_npz",
     "load_scenario_from_npz",
+    "validate_dataset",
+    "write_dataset_quality_report",
 ]
+
+try:
+    from pmu_fsa.simulation.renewables import summarize_renewable_dispatch
+    __all__.append("summarize_renewable_dispatch")
+except ImportError:
+    pass
+
+try:
+    from pmu_fsa.simulation.dynamic_engine import solve_power_flow
+    __all__.append("solve_power_flow")
+except ImportError:
+    pass
+
+try:
+    from pmu_fsa.simulation.pmu_recorder import (
+        CANONICAL_13BUS_PMU_PLACEMENT,
+        compute_causal_rocof,
+        estimate_pmu_system_frequency,
+    )
+    __all__.extend([
+        "CANONICAL_13BUS_PMU_PLACEMENT",
+        "compute_causal_rocof",
+        "estimate_pmu_system_frequency",
+    ])
+except ImportError:
+    pass

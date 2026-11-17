@@ -1,14 +1,19 @@
-"""Post-disturbance PMU window slicing and feature extraction."""
+"""Post-disturbance PMU window slicing and canonical 14-feature extraction."""
 
 from pmu_fsa.features.window_slicer import (
+    FORBIDDEN_WINDOW_CHANNEL_KEYS,
     CausalWindow,
     extract_causal_window,
     slice_scenario_batch,
 )
 from pmu_fsa.features.extractor import (
+    CANONICAL_13BUS_PMU_PLACEMENT,
     CANONICAL_AREA_PARTITION,
+    CANONICAL_FEATURE_NAMES,
     CORE_FEATURE_NAMES,
     DESCRIPTIVE_FEATURE_NAMES,
+    FEATURE_SPECIFICATIONS,
+    PRIMARY_TIE_LINES,
     FeatureExtractor,
     calc_angle_divergence,
     calc_coi_acceleration,
@@ -28,6 +33,7 @@ from pmu_fsa.features.extractor import (
 
 __all__ = [
     "CausalWindow",
+    "FORBIDDEN_WINDOW_CHANNEL_KEYS",
     "extract_causal_window",
     "slice_scenario_batch",
     "FeatureExtractor",
@@ -45,7 +51,11 @@ __all__ = [
     "calc_interarea_dispersion",
     "calc_angle_divergence",
     "calc_coi_acceleration",
+    "CANONICAL_13BUS_PMU_PLACEMENT",
     "CANONICAL_AREA_PARTITION",
+    "CANONICAL_FEATURE_NAMES",
     "CORE_FEATURE_NAMES",
     "DESCRIPTIVE_FEATURE_NAMES",
+    "FEATURE_SPECIFICATIONS",
+    "PRIMARY_TIE_LINES",
 ]
