@@ -247,10 +247,16 @@ class ExperimentPipeline:
         proc_dir.mkdir(parents=True, exist_ok=True)
 
         logger.info("Step 2 [extract_features]: Extracting 14 features across windows %s...", self.config.window_lengths)
-        extractor = FeatureExtractor(f_nominal=self.config.f_nominal)
+        extractor = FeatureExtractor(f_nominal=self.config.f_nominal, strict_nadir=True)
 
         for w in self.config.window_lengths:
-            X, y_nadir, y_secure, meta_df = extractor.transform_batch(self.scenarios, t_obs=w, as_dataframe=True)
+            elig_scens, excl_ids = WindowSensitivityBenchmark.filter_causal_scenarios(self.scenarios, float(w))
+            if not elig_scens:
+                elig_scens = list(self.scenarios)
+                extractor_w = FeatureExtractor(f_nominal=self.config.f_nominal, strict_nadir=False)
+            else:
+                extractor_w = extractor
+            X, y_nadir, y_secure, meta_df = extractor_w.transform_batch(elig_scens, t_obs=w, as_dataframe=True)
             X_df = X[CANONICAL_FEATURE_NAMES].copy() if isinstance(X, pd.DataFrame) else pd.DataFrame(X, columns=CANONICAL_FEATURE_NAMES)
             self.features_by_window[w] = (X_df, y_nadir, y_secure, meta_df)
 
@@ -264,6 +270,7 @@ class ExperimentPipeline:
                 "feature_names": np.asarray(CANONICAL_FEATURE_NAMES, dtype=str),
                 "scenario_ids": scen_ids,
                 "partitions": parts,
+                "excluded_scenario_ids": np.asarray(excl_ids, dtype=str),
             }
             if isinstance(meta_df, pd.DataFrame):
                 for col in meta_df.columns:
@@ -329,6 +336,20 @@ class ExperimentPipeline:
         X_fit = np.vstack([X_tr, X_va]) if (X_va is not None and len(X_va) > 0) else X_tr
         yn_fit = np.concatenate([yn_tr, yn_va]) if (yn_va is not None and len(yn_va) > 0) else yn_tr
 
+        val_reg_maes: Dict[str, float] = {}
+        if X_va is not None and len(X_va) > 0:
+            for rk, builder in (
+                ("mean", lambda: MeanNadirRegressor()),
+                ("analytical", lambda: AnalyticalSwingNadirRegressor()),
+                ("linear", lambda: LinearNadirRegressor()),
+                ("dt", lambda: DecisionTreeNadirRegressor(max_depth=5, random_state=self.config.seed)),
+                ("rf", lambda: RandomForestNadirRegressor(n_estimators=100, random_state=self.config.seed)),
+                ("gbdt", lambda: GradientBoostingNadirRegressor(n_estimators=100, random_state=self.config.seed)),
+                ("lgbm", lambda: LightGBMNadirRegressor(n_estimators=100, random_state=self.config.seed)),
+            ):
+                m_val = builder().fit(X_tr, yn_tr)
+                val_reg_maes[rk] = float(m_val.evaluate(X_va, yn_va)["mae"])
+
         self.trained_models["mean"] = MeanNadirRegressor().fit(X_fit, yn_fit)
         self.trained_models["analytical"] = AnalyticalSwingNadirRegressor().fit(X_fit, yn_fit)
         self.trained_models["linear"] = LinearNadirRegressor().fit(X_fit, yn_fit)
@@ -336,6 +357,9 @@ class ExperimentPipeline:
         self.trained_models["rf"] = RandomForestNadirRegressor(n_estimators=100, random_state=self.config.seed).fit(X_fit, yn_fit)
         self.trained_models["gbdt"] = GradientBoostingNadirRegressor(n_estimators=100, random_state=self.config.seed).fit(X_fit, yn_fit)
         self.trained_models["lgbm"] = LightGBMNadirRegressor(n_estimators=100, random_state=self.config.seed).fit(X_fit, yn_fit)
+
+        best_rk = min(val_reg_maes, key=val_reg_maes.get) if val_reg_maes else "gbdt"
+        self.trained_models["best_regressor"] = self.trained_models[best_rk]
 
         platt_clf = CalibratedGBDTClassifier(
             method="platt",

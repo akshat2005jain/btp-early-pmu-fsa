@@ -1,0 +1,69 @@
+{
+  "captured_at_local": "2026-11-17T21:35:00+05:30",
+  "repository_root": ".",
+  "starting_branch": "btp-scientific-validation",
+  "working_branch_created": "btp-publication-audit",
+  "preserved_branches": {
+    "main": "774b5e6",
+    "btp-scientific-validation": "e573837c249c7ef83a01f635db0d2e2ca2101a32"
+  },
+  "starting_commit_sha": "e573837c249c7ef83a01f635db0d2e2ca2101a32",
+  "starting_working_tree_clean": true,
+  "remote_origin": "https://github.com/akshat2005jain/btp-early-pmu-fsa.git",
+  "remote_push_policy": "prohibited_without_explicit_authorization",
+  "hardware_and_os": {
+    "os": "macOS Darwin 25.6.0 x86_64",
+    "cpu": "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz",
+    "logical_cores": 12,
+    "ram_bytes": 17179869184,
+    "ram_gb": 16.0
+  },
+  "software_environment": {
+    "python_executable": ".venv/bin/python",
+    "python_version": "3.9.6",
+    "packages": {
+      "numpy": "2.0.2",
+      "scipy": "1.13.1",
+      "pandas": "2.2.3",
+      "scikit-learn": "1.6.1",
+      "lightgbm": "4.6.0",
+      "matplotlib": "3.9.4",
+      "joblib": "1.5.3",
+      "pytest": "8.4.2"
+    }
+  },
+  "gitignored_reproduction_files": {
+    "data/raw/*.npz": {
+      "present_on_disk": true,
+      "file_count": 750,
+      "role": "Observable 50-fps PMU scenario streams required for feature extraction and benchmark evaluation; reproducible via scripts/run_simulations.py"
+    },
+    "data/raw_sim/*.npz": {
+      "present_on_disk": true,
+      "file_count": 750,
+      "role": "Internal ODE rotor/COI trajectories used only for ground-truth label verification and physics plots; reproducible via scripts/run_simulations.py"
+    }
+  },
+  "baseline_artifact_sha256": {
+    "data/manifest.json": "5b75bb61c645f3ed52a5315ce2ec7d2cb71c2a25c02e00faf057b7dd9623d982",
+    "data/processed/features.npz": "af63f0ea85fd71c0be6ec68e9d4765cec57b77311b4c50f7491b72f512c7c2f8",
+    "data/processed/features_t0.5s.npz": "591e83780455cc6fe1882671d37970603760f9145d3ac8761e5dd11871b57647",
+    "data/processed/features_t1.0s.npz": "af63f0ea85fd71c0be6ec68e9d4765cec57b77311b4c50f7491b72f512c7c2f8",
+    "data/processed/features_t1.5s.npz": "41701abc3d54a9dc95fb909c7caa103ec7acddd1604003a5ce573b68532fdd3e",
+    "data/processed/features_t2.0s.npz": "af009c7f5f63d40087adc8dfb231f36875671167545574508bf9de70a42a3576",
+    "models/best_regressor.joblib": "30826cc378dfc329e37315e713242453efa740f5b56dc3f557a62cde69678787",
+    "models/linear.joblib": "30826cc378dfc329e37315e713242453efa740f5b56dc3f557a62cde69678787",
+    "models/gbdt.joblib": "043130c878765812bf8cf9ab6b25c70e299f38c3dbadaa5339384c02cc6fd9b5",
+    "models/best_classifier.joblib": "cea3871e66210f653e10d09d47983c7be406a9c731cff27789302ff77812b09b",
+    "models/calibrated_gb.joblib": "cea3871e66210f653e10d09d47983c7be406a9c731cff27789302ff77812b09b",
+    "models/calibrated_gb_platt.joblib": "cea3871e66210f653e10d09d47983c7be406a9c731cff27789302ff77812b09b",
+    "models/calibrated_gb_iso.joblib": "24e48daec929a2cf754974bcce6de20e863218c58a39ca2ae3aa98fb8fc783b8",
+    "models/calibrated_gb_isotonic.joblib": "24e48daec929a2cf754974bcce6de20e863218c58a39ca2ae3aa98fb8fc783b8"
+  },
+  "baseline_tests": {
+    "pytest_command": ".venv/bin/python -m pytest tests/ -q",
+    "pytest_result": "232 passed, 9 warnings in 123.56s",
+    "e2e_command": ".venv/bin/python tests/e2e/run_e2e.py --tier all --report-path reports/final_audit/baseline_e2e_report.md",
+    "e2e_result": "149/149 passed (0 failed, 0 skipped) in 54.83s"
+  }
+}

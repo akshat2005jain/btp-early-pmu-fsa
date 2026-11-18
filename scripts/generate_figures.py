@@ -484,7 +484,7 @@ def plot_fig01_system_and_architecture(
 
     _box(
         0.4, 4.35, 9.2, 1.42,
-        "3. Canonical 14-Feature Spatio-Temporal Extractor (Full Rank 14/14)",
+        "3. Canonical 14-Feature Spatio-Temporal Extractor (Rank 13/14 Clean, 14/14 Noisy)",
         "• ROCOF kinematics (4): rocof_init, rocof_peak_neg, rocof_end, rocof_mean\n"
         "• Aggregate excursion (3) + Spatial/Tie-line angles (5) + 2nd-order arrest curvature d²f/dt² (2)",
         "#EFF6FF", "#2563EB", "#1E3A8A",
@@ -2028,7 +2028,8 @@ def plot_fig13_latency_and_learning_curve(
     ax1.bar(xs + ws, p99_ms, width=ws, color=PALETTE["amber"], edgecolor=PALETTE["navy"], lw=0.65, label="P99 Tail (ms)")
 
     ax1.set_yscale("log")
-    ax1.axhline(10.0, color=PALETTE["red"], lw=1.5, ls="--", label="Real-Time Screening Budget (10.0 ms)")
+    ax1.axhline(10.0, color=PALETTE["red"], lw=1.5, ls="--", label="Sub-Frame Screening Target (10.0 ms)")
+    ax1.axhline(20.0, color=PALETTE["slate"], lw=1.2, ls=":", label="50-fps PMU Frame Interval (20.0 ms)")
 
     for idx_s, (m_v, p99_v) in enumerate(zip(med_ms, p99_ms)):
         top_v = max(m_v, p99_v)
@@ -2078,8 +2079,153 @@ def plot_fig13_latency_and_learning_curve(
     return save_dual(fig, out_dir, "fig13_latency_and_learning_curve", dpi=dpi)
 
 
+# ---------------------------------------------------------------------------
+# Figure 14: Paired Statistical Effect Sizes (Holm) & Empirical Latency CDF
+# ---------------------------------------------------------------------------
+def plot_fig14_statistical_and_latency_distributions(
+    out_dir: Path,
+    tables_dir: Path,
+    dpi: int = 240,
+) -> Tuple[Path, Path]:
+    fig, axes = plt.subplots(2, 2, figsize=(14.4, 8.6))
+    ax_reg, ax_clf, ax_box, ax_cdf = axes.ravel()
+
+    # Panel (a): Paired regression MAE differences vs Validation-Selected Ridge (or GBDT fallback)
+    reg_stat_path = tables_dir / "statistical_tests_regression_ridge.csv"
+    if not reg_stat_path.exists():
+        reg_stat_path = tables_dir / "statistical_tests_regression.csv"
+    if reg_stat_path.exists():
+        df_sr = pd.read_csv(reg_stat_path)
+        ref_name = str(df_sr["reference_model"].iloc[0]) if len(df_sr) else "ref"
+        df_sr = df_sr[df_sr["baseline_model"] != ref_name].reset_index(drop=True)
+        y_pos = np.arange(len(df_sr))
+        deltas_mhz = df_sr["delta_ref_minus_base"].to_numpy(dtype=float) * 1000.0
+        lo_mhz = df_sr["ci95_low"].to_numpy(dtype=float) * 1000.0
+        hi_mhz = df_sr["ci95_high"].to_numpy(dtype=float) * 1000.0
+        holm_col = "significant_holm_005" if "significant_holm_005" in df_sr.columns else "significant_p005"
+        sigs = df_sr[holm_col].astype(bool).to_numpy()
+        cols = [PALETTE["blue"] if s else PALETTE["slate"] for s in sigs]
+
+        ax_reg.axvline(0.0, color=PALETTE["red"], lw=1.3, ls="--", label="Zero Difference Null")
+        for idx_r in range(len(df_sr)):
+            ax_reg.errorbar(
+                deltas_mhz[idx_r],
+                y_pos[idx_r],
+                xerr=[[max(0.0, deltas_mhz[idx_r] - lo_mhz[idx_r])], [max(0.0, hi_mhz[idx_r] - deltas_mhz[idx_r])]],
+                fmt="o",
+                color=cols[idx_r],
+                ecolor=cols[idx_r],
+                elinewidth=1.8,
+                capsize=4,
+                markersize=6.5,
+            )
+            p_h = float(df_sr["p_holm_adjusted"].iloc[idx_r]) if "p_holm_adjusted" in df_sr.columns else float(df_sr["p_value_bootstrap"].iloc[idx_r])
+            tag = f"{deltas_mhz[idx_r]:+.1f} mHz (p_Holm={p_h:.3f}{'*' if sigs[idx_r] else ''})"
+            ax_reg.text(hi_mhz[idx_r] + 3.0, y_pos[idx_r], tag, va="center", ha="left", fontsize=7.1, fontweight="bold", color=cols[idx_r])
+        ax_reg.set_yticks(y_pos)
+        ax_reg.set_yticklabels([str(b) for b in df_sr["baseline_model"]], fontsize=8.0, fontweight="bold")
+        span_r = max(20.0, float(np.max(np.abs(np.concatenate([lo_mhz, hi_mhz])))) * 1.45)
+        ax_reg.set_xlim(min(-15.0, float(np.min(lo_mhz)) - 15.0), float(np.max(hi_mhz)) + span_r * 0.55)
+        n_pr = int(df_sr["n_paired"].iloc[0]) if "n_paired" in df_sr.columns and len(df_sr) else 52
+        ax_reg.set_title(f"(a) Paired Regression ΔMAE ({ref_name} − Baseline, ID N={n_pr})", fontweight="bold")
+        ax_reg.set_xlabel("Paired ΔMAE in mHz (Negative = Reference Model Better; 95% Bootstrap CI)")
+        ax_reg.grid(True, axis="x")
+
+    # Panel (b): Paired classification Brier differences vs Calibrated GBDT (Platt)
+    clf_stat_path = tables_dir / "statistical_tests_classification.csv"
+    if clf_stat_path.exists():
+        df_sc = pd.read_csv(clf_stat_path)
+        ref_c = str(df_sc["reference_model"].iloc[0]) if len(df_sc) else "calibrated_gb_platt"
+        df_sc = df_sc[df_sc["baseline_model"] != ref_c].reset_index(drop=True)
+        y_pos_c = np.arange(len(df_sc))
+        deltas_b = df_sc["delta_ref_minus_base"].to_numpy(dtype=float)
+        lo_b = df_sc["ci95_low"].to_numpy(dtype=float)
+        hi_b = df_sc["ci95_high"].to_numpy(dtype=float)
+        holm_col_c = "significant_holm_005" if "significant_holm_005" in df_sc.columns else "significant_p005"
+        sigs_c = df_sc[holm_col_c].astype(bool).to_numpy()
+        cols_c = [PALETTE["emerald"] if s else PALETTE["slate"] for s in sigs_c]
+
+        ax_clf.axvline(0.0, color=PALETTE["red"], lw=1.3, ls="--")
+        for idx_c in range(len(df_sc)):
+            ax_clf.errorbar(
+                deltas_b[idx_c],
+                y_pos_c[idx_c],
+                xerr=[[max(0.0, deltas_b[idx_c] - lo_b[idx_c])], [max(0.0, hi_b[idx_c] - deltas_b[idx_c])]],
+                fmt="s",
+                color=cols_c[idx_c],
+                ecolor=cols_c[idx_c],
+                elinewidth=1.8,
+                capsize=4,
+                markersize=6.2,
+            )
+            p_hc = float(df_sc["p_holm_adjusted"].iloc[idx_c]) if "p_holm_adjusted" in df_sc.columns else float(df_sc["p_value_bootstrap"].iloc[idx_c])
+            tag_c = f"{deltas_b[idx_c]:+.4f} (p_Holm={p_hc:.3f}{'*' if sigs_c[idx_c] else ''})"
+            ax_clf.text(hi_b[idx_c] + 0.002, y_pos_c[idx_c], tag_c, va="center", ha="left", fontsize=7.0, fontweight="bold", color=cols_c[idx_c])
+        ax_clf.set_yticks(y_pos_c)
+        ax_clf.set_yticklabels([str(b) for b in df_sc["baseline_model"]], fontsize=8.0, fontweight="bold")
+        ax_clf.set_xlim(min(-0.04, float(np.min(lo_b)) - 0.01), max(0.04, float(np.max(hi_b)) + 0.055))
+        n_pc = int(df_sc["n_paired"].iloc[0]) if "n_paired" in df_sc.columns and len(df_sc) else 52
+        ax_clf.set_title(f"(b) Paired Brier Difference (Platt − Baseline, ID N={n_pc})", fontweight="bold")
+        ax_clf.set_xlabel("Paired ΔBrier Score (Negative = Platt Better; Sign-Flip Holm Adjusted)")
+        ax_clf.grid(True, axis="x")
+
+    # Panels (c) & (d): Empirical per-repetition latency distributions from latency_trials.csv
+    trials_path = tables_dir / "latency_trials.csv"
+    if trials_path.exists():
+        df_tr = pd.read_csv(trials_path)
+        n_trials = len(df_tr)
+        series_list = [
+            df_tr["slice_times_ms"].to_numpy(dtype=float),
+            df_tr["feat_times_ms"].to_numpy(dtype=float),
+            df_tr["infer_times_ms"].to_numpy(dtype=float),
+            df_tr["e2e_times_ms"].to_numpy(dtype=float),
+        ]
+        labels_tr = ["1. Window\nSlice", "2. 14-Feat.\nExtract", "3-5. Model\nInfer+Cal", "6. Full E2E\nOnline"]
+        bp = ax_box.boxplot(
+            series_list,
+            patch_artist=True,
+            tick_labels=labels_tr,
+            showfliers=True,
+            medianprops={"color": PALETTE["navy"], "linewidth": 2.0},
+        )
+        fill_cols = ["#DBEAFE", "#BAE6FD", "#DDD6FE", "#A7F3D0"]
+        for patch, fc in zip(bp["boxes"], fill_cols):
+            patch.set_facecolor(fc)
+            patch.set_edgecolor(PALETTE["navy"])
+        ax_box.set_title(f"(c) Empirical Stage Latency Boxplots (N={n_trials} Measured Runs)", fontweight="bold")
+        ax_box.set_ylabel("Measured Latency (ms, desktop perf_counter_ns)")
+        ax_box.grid(True, axis="y")
+
+        for arr_s, lbl_s, col_s in zip(
+            [series_list[1], series_list[2], series_list[3]],
+            ["14-Feature Extraction", "Reg + Calibrated Clf Inference", "Total End-to-End Online"],
+            [PALETTE["blue"], PALETTE["violet"], PALETTE["emerald"]],
+        ):
+            xs_cdf = np.sort(arr_s)
+            ys_cdf = np.arange(1, len(xs_cdf) + 1, dtype=float) / float(len(xs_cdf))
+            ax_cdf.step(xs_cdf, ys_cdf, where="post", lw=2.1, color=col_s, label=f"{lbl_s} (med={np.median(arr_s):.2f} ms)")
+        ax_cdf.axvline(10.0, color=PALETTE["red"], lw=1.4, ls="--", label="10.0 ms Screening Target")
+        ax_cdf.axvline(20.0, color=PALETTE["slate"], lw=1.3, ls=":", label="20.0 ms (50-fps Frame Interval)")
+        ax_cdf.set_xlim(0.0, max(21.5, float(np.max(series_list[3])) * 1.15))
+        ax_cdf.set_ylim(0.0, 1.04)
+        ax_cdf.set_title(f"(d) Empirical Latency CDF vs. 50-fps Frame Interval (N={n_trials})", fontweight="bold")
+        ax_cdf.set_xlabel("Execution Time per Scenario (ms)")
+        ax_cdf.set_ylabel("Empirical Cumulative Probability")
+        ax_cdf.grid(True)
+        ax_cdf.legend(loc="lower right", fontsize=7.0, framealpha=0.95)
+    else:
+        df_stg = pd.read_csv(tables_dir / "latency_stages.csv")
+        ax_box.bar(np.arange(len(df_stg)), df_stg["Median (ms)"], color=PALETTE["blue"])
+        ax_box.set_title("(c) Stage Median Latencies (ms)", fontweight="bold")
+        ax_cdf.bar(np.arange(len(df_stg)), df_stg["P95 (ms)"], color=PALETTE["emerald"])
+        ax_cdf.set_title("(d) Stage P95 Latencies (ms)", fontweight="bold")
+
+    fig.tight_layout(pad=1.2)
+    return save_dual(fig, out_dir, "fig14_statistical_and_latency_distributions", dpi=dpi)
+
+
 def parse_args(args=None):
-    parser = argparse.ArgumentParser(description="Generate all 13 publication figures (PNG + PDF)")
+    parser = argparse.ArgumentParser(description="Generate all 14 publication figures (PNG + PDF)")
     parser.add_argument("--output-dir", type=str, default="results/figures", help="Output directory for figures")
     parser.add_argument("--raw-dir", "--data-dir", dest="raw_dir", type=str, default="data/raw", help="Observable PMU .npz directory")
     parser.add_argument("--raw-sim-dir", type=str, default="data/raw_sim", help="Internal ODE simulator .npz directory")
@@ -2121,6 +2267,7 @@ def main(args=None) -> int:
         plot_fig11_pmu_noise_robustness(out_dir, tables_dir, dpi=dpi),
         plot_fig12_feature_importance_and_ablation(out_dir, tables_dir, dpi=dpi),
         plot_fig13_latency_and_learning_curve(out_dir, tables_dir, dpi=dpi),
+        plot_fig14_statistical_and_latency_distributions(out_dir, tables_dir, dpi=dpi),
     ]
 
     print(f"Exported {len(exported)} PNG + {len(exported)} PDF figures ({2 * len(exported)} files) to {out_dir}")

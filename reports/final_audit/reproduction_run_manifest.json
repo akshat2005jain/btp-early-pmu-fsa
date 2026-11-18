@@ -1,0 +1,65 @@
+{
+  "reproduction_version": "2.0.0",
+  "feature_schema_version": "2.0.0",
+  "branch": "btp-publication-audit",
+  "base_commit": "e573837c249c7ef83a01f635db0d2e2ca2101a32",
+  "config_file": "configs/default_50hz.yaml",
+  "random_seed": 42,
+  "nominal_frequency_hz": 50.0,
+  "security_threshold_hz": 49.50,
+  "pmu_fps": 50,
+  "primary_window_s": 1.0,
+  "window_sweep_s": [0.5, 1.0, 1.5, 2.0],
+  "strict_pre_nadir_enforced": true,
+  "scenario_counts": {
+    "total": 750,
+    "id_total": 270,
+    "train": 148,
+    "val": 70,
+    "test": 52,
+    "ood_test": 480,
+    "ood_causal_at_2_0s": 472,
+    "ood_excluded_at_2_0s": 8
+  },
+  "partition_scenario_hashes": {
+    "train": "439c53d3a8e376b70b86dc1cb88877edac50c017e02ec166b778fdc1c8356893",
+    "val": "45e7bc71d2e72df6213b221b87d6d9d0ac5fe7a8348cbb409de3a7fd2c868e0e",
+    "test": "086e58386135cc8f800eac390eabe950a20eb761466d75b177e998a15641e1f0",
+    "ood_test": "6efc99bd2131f4f0b5e9edb4700884c3258f0ceb1beb79ad5f58009c34ea40a8",
+    "zero_overlap_verified": true
+  },
+  "selected_models": {
+    "validation_selected_best_regressor": "linear",
+    "proposed_nonlinear_regressor": "gbdt",
+    "validation_selected_best_classifier": "calibrated_gb_platt"
+  },
+  "saved_model_artifacts": [
+    "models/mean.joblib",
+    "models/analytical.joblib",
+    "models/linear.joblib",
+    "models/dt.joblib",
+    "models/rf.joblib",
+    "models/gbdt.joblib",
+    "models/lgbm.joblib",
+    "models/best_regressor.joblib",
+    "models/logistic_clf.joblib",
+    "models/dt_clf.joblib",
+    "models/rf_clf.joblib",
+    "models/gbdt_clf.joblib",
+    "models/lgbm_clf.joblib",
+    "models/calibrated_gb_platt.joblib",
+    "models/calibrated_gb_iso.joblib",
+    "models/calibrated_gb.joblib",
+    "models/best_classifier.joblib"
+  ],
+  "exported_figure_count": 14,
+  "exported_figure_files_total": 28,
+  "environment": {
+    "python": "3.9.6",
+    "numpy": "2.0.2",
+    "scipy": "1.13.1",
+    "scikit_learn": "1.6.1",
+    "pandas": "2.2.3",
+    "cpu": "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz (12 logical cores)"
+  }
+}

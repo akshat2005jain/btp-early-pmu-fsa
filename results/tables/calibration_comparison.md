@@ -1,5 +1,5 @@
-| Model | Effective_Method | N_Cal | Val_Brier | Val_ECE | Test_Brier | Test_ECE | Test_MCE | Test_F1 | Test_PR_AUC | Test_FNR_insecure | Missed_Insecure |
+| Model | Calibration_Method | Calibration_Protocol | N_Cal | Val_Brier | Val_ECE | Test_Brier | Test_ECE | Test_MCE | Test_F1 | Test_FNR_Insecure | Fallback_Used |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Uncalibrated GBDT Classifier | none | 70 | 0.0143 | 0.0143 | 0.0192 | 0.0193 | 0.0453 | 0.9767 | 0.9773 | 0.0323 | 1 |
-| Proposed Calibrated GBDT (Platt Scaling) | platt | 218 | 0.0056 | 0.0129 | 0.0141 | 0.0267 | 0.2960 | 0.9767 | 1.0000 | 0.0323 | 1 |
-| Proposed Calibrated GBDT (PAVA Isotonic) | isotonic | 218 | 0.0063 | 0.0095 | 0.0080 | 0.0192 | 0.5706 | 0.9767 | 1.0000 | 0.0323 | 1 |
+| Uncalibrated GBDT | uncalibrated | direct_gbdt_deviance | 0 | 0.0143 | 0.0143 | 0.0192 | 0.0193 | 0.0453 | 0.9767 | 0.0323 | 0 |
+| Proposed Calibrated GBDT (Platt) | platt | crossfit_cv5_refit_train_val | 218 | 0.0056 | 0.0129 | 0.0141 | 0.0267 | 0.2960 | 0.9767 | 0.0323 | 0 |
+| Proposed Calibrated GBDT (Isotonic) | isotonic | crossfit_cv5_refit_train_val | 218 | 0.0063 | 0.0095 | 0.0080 | 0.0192 | 0.5706 | 0.9767 | 0.0323 | 0 |

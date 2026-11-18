@@ -1,0 +1,15 @@
+Task,Key,Display_Name,Role,Hyperparameters,Fit_Pool,Val_Primary_Metric,ID_Test_Primary_Metric
+Regression,mean,Constant Mean Baseline,baseline_regressor,{},train+val (N=218),MAE=0.2319,MAE=0.2104
+Regression,analytical,Analytical Swing-Equation Baseline,baseline_regressor,"{""alpha"": 0.01}",train+val (N=218),MAE=0.0035,MAE=0.0042
+Regression,linear,Ridge Linear Regression,baseline_regressor,"{""alpha"": 0.1}",train+val (N=218),MAE=0.0034,MAE=0.0034
+Regression,dt,Decision Tree (CART),baseline_regressor,"{""max_depth"": 5}",train+val (N=218),MAE=0.0151,MAE=0.0111
+Regression,rf,Random Forest,baseline_regressor,"{""max_depth"": 10, ""n_estimators"": 100}",train+val (N=218),MAE=0.0112,MAE=0.0090
+Regression,gbdt,Gradient Boosting (GBDT),proposed_nonlinear_regressor,"{""learning_rate"": 0.08, ""max_depth"": 4, ""n_estimators"": 100}",train+val (N=218),MAE=0.0106,MAE=0.0077
+Regression,lgbm,LightGBM (sklearn_hist_gbdt),baseline_regressor,"{""backend"": ""sklearn_hist_gbdt"", ""learning_rate"": 0.08, ""n_estimators"": 100, ""num_leaves"": 15}",train+val (N=218),MAE=0.0148,MAE=0.0086
+Classification,logistic_clf,Logistic Regression,baseline_classifier,"{""C"": 1.0}",train+val (N=218),Brier=0.0123,Brier=0.0132
+Classification,dt_clf,Decision Tree,baseline_classifier,"{""max_depth"": 5}",train+val (N=218),Brier=0.0143,Brier=0.0192
+Classification,rf_clf,Random Forest,baseline_classifier,"{""max_depth"": 10, ""n_estimators"": 100}",train+val (N=218),Brier=0.0091,Brier=0.0093
+Classification,gbdt_clf,Uncalibrated GBDT,baseline_classifier,"{""learning_rate"": 0.08, ""max_depth"": 4, ""n_estimators"": 100}",train+val (N=218),Brier=0.0143,Brier=0.0192
+Classification,lgbm_clf,LightGBM Classifier,baseline_classifier,"{""learning_rate"": 0.08, ""n_estimators"": 100, ""num_leaves"": 15}",train+val (N=218),Brier=0.0143,Brier=0.0181
+Classification,calibrated_gb_platt,Proposed Calibrated GBDT (Platt),proposed_calibrated_classifier,"{""cv_folds"": 5, ""learning_rate"": 0.08, ""max_depth"": 4, ""method"": ""platt"", ""n_estimators"": 100}",crossfit_cv5_refit_train_val,Brier=0.0056,Brier=0.0141
+Classification,calibrated_gb_iso,Proposed Calibrated GBDT (Isotonic),proposed_calibrated_classifier,"{""cv_folds"": 5, ""learning_rate"": 0.08, ""max_depth"": 4, ""method"": ""isotonic"", ""n_estimators"": 100}",crossfit_cv5_refit_train_val,Brier=0.0063,Brier=0.0080

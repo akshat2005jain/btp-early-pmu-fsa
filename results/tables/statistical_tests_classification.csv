@@ -1,8 +1,8 @@
-reference_model,baseline_model,metric,reference_score,baseline_score,delta_ref_minus_base,ci95_low,ci95_high,p_value_wilcoxon,p_value_bootstrap,significant_p005
-calibrated_gb_platt,logistic_clf,brier_score,0.0141,0.01324,0.00087,-0.01307,0.02063,0.0,0.964,True
-calibrated_gb_platt,dt_clf,brier_score,0.0141,0.01923,-0.00513,-0.0298,0.01,0.0,0.744,True
-calibrated_gb_platt,rf_clf,brier_score,0.0141,0.00934,0.00477,0.00073,0.00943,2.4e-05,0.02,True
-calibrated_gb_platt,gbdt_clf,brier_score,0.0141,0.01922,-0.00512,-0.03047,0.00955,0.791643,0.742,False
-calibrated_gb_platt,lgbm_clf,brier_score,0.0141,0.01808,-0.00397,-0.02525,0.01023,0.517821,0.838,False
-calibrated_gb_platt,calibrated_gb_platt,brier_score,0.0141,0.0141,0.0,0.0,0.0,1.0,1.0,False
-calibrated_gb_platt,calibrated_gb_iso,brier_score,0.0141,0.00801,0.00609,0.00196,0.01247,0.0,0.0,True
+reference_model,baseline_model,n_paired,metric,direction,reference_score,baseline_score,delta_ref_minus_base,ci95_low,ci95_high,test_statistic,p_value_permutation,p_holm_adjusted,p_value_bootstrap,p_value_wilcoxon,significant_unadjusted_005,significant_holm_005,significant_p005,practical_significance,test_disagreement_note
+calibrated_gb_platt,logistic_clf,52,brier_score,lower_is_better,0.0141,0.01324,0.00087,-0.0127,0.02034,0.00087,1.0,1.0,0.922039,0.0,False,False,False,negligible (<0.002 Brier difference),"Wilcoxon tests rank symmetry of non-zero differences (sensitive to many tiny probability/residual offsets vs rare large errors), whereas primary sign-flip permutation tests mean loss difference E[d_i]=0."
+calibrated_gb_platt,dt_clf,52,brier_score,lower_is_better,0.0141,0.01923,-0.00513,-0.02918,0.01022,-0.00513,1.0,1.0,0.635682,0.0,False,False,False,small (0.002-0.010 Brier difference),"Wilcoxon tests rank symmetry of non-zero differences (sensitive to many tiny probability/residual offsets vs rare large errors), whereas primary sign-flip permutation tests mean loss difference E[d_i]=0."
+calibrated_gb_platt,rf_clf,52,brier_score,lower_is_better,0.0141,0.00934,0.00477,0.00084,0.00974,0.00477,0.040992,0.204959,0.036482,2.4e-05,True,False,False,small (0.002-0.010 Brier difference),consistent
+calibrated_gb_platt,gbdt_clf,52,brier_score,lower_is_better,0.0141,0.01922,-0.00512,-0.03047,0.0097,-0.00512,0.9998,1.0,0.646177,0.791643,False,False,False,small (0.002-0.010 Brier difference),consistent
+calibrated_gb_platt,lgbm_clf,52,brier_score,lower_is_better,0.0141,0.01808,-0.00397,-0.02603,0.0101,-0.00397,0.9992,1.0,0.664168,0.517821,False,False,False,small (0.002-0.010 Brier difference),consistent
+calibrated_gb_platt,calibrated_gb_platt,52,brier_score,lower_is_better,0.0141,0.0141,0.0,0.0,0.0,0.0,1.0,1.0,1.0,1.0,False,False,False,self_reference,self_reference
+calibrated_gb_platt,calibrated_gb_iso,52,brier_score,lower_is_better,0.0141,0.00801,0.00609,0.00181,0.0124,0.00609,0.0002,0.0012,0.029485,0.0,True,True,True,small (0.002-0.010 Brier difference),consistent

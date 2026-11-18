@@ -1,4 +1,7 @@
 {
+  "feature_schema_version": "2.0.0",
+  "git_commit": "e573837c249c7ef83a01f635db0d2e2ca2101a32",
+  "features_sha256": "af63f0ea85fd71c0be6ec68e9d4765cec57b77311b4c50f7491b72f512c7c2f8",
   "protocol": "strict_metadata_partitions",
   "equalized_train_val_refit": true,
   "seed": 42,
@@ -327,6 +330,40 @@
       "learning_rate": 0.08,
       "num_leaves": 15,
       "backend": "sklearn_hist_gbdt"
+    },
+    "logistic_clf": {
+      "C": 1.0
+    },
+    "dt_clf": {
+      "max_depth": 5
+    },
+    "rf_clf": {
+      "n_estimators": 100,
+      "max_depth": 10
+    },
+    "gbdt_clf": {
+      "n_estimators": 100,
+      "learning_rate": 0.08,
+      "max_depth": 4
+    },
+    "lgbm_clf": {
+      "n_estimators": 100,
+      "learning_rate": 0.08,
+      "num_leaves": 15
+    },
+    "calibrated_gb_platt": {
+      "method": "platt",
+      "n_estimators": 100,
+      "learning_rate": 0.08,
+      "max_depth": 4,
+      "cv_folds": 5
+    },
+    "calibrated_gb_iso": {
+      "method": "isotonic",
+      "n_estimators": 100,
+      "learning_rate": 0.08,
+      "max_depth": 4,
+      "cv_folds": 5
     }
   },
   "val_selected_best_regressor": "linear",
@@ -462,7 +499,7 @@
           0.1759,
           0.2517
         ],
-        "infer_ms": 0.0008
+        "infer_ms": 0.0014
       },
       "analytical": {
         "mae": 0.0042,
@@ -475,7 +512,7 @@
           0.0032,
           0.0052
         ],
-        "infer_ms": 0.0127
+        "infer_ms": 0.0147
       },
       "linear": {
         "mae": 0.0034,
@@ -488,7 +525,7 @@
           0.0026,
           0.0043
         ],
-        "infer_ms": 0.0111
+        "infer_ms": 0.0095
       },
       "dt": {
         "mae": 0.0111,
@@ -501,7 +538,7 @@
           0.0087,
           0.0137
         ],
-        "infer_ms": 0.0086
+        "infer_ms": 0.007
       },
       "rf": {
         "mae": 0.009,
@@ -514,7 +551,7 @@
           0.0064,
           0.0122
         ],
-        "infer_ms": 0.2905
+        "infer_ms": 0.3178
       },
       "gbdt": {
         "mae": 0.0077,
@@ -527,7 +564,7 @@
           0.0058,
           0.0101
         ],
-        "infer_ms": 0.0182
+        "infer_ms": 0.0184
       },
       "lgbm": {
         "mae": 0.0086,
@@ -540,7 +577,7 @@
           0.0067,
           0.0107
         ],
-        "infer_ms": 0.0423
+        "infer_ms": 0.0445
       }
     },
     "classification": {
@@ -935,7 +972,7 @@
       0.1759,
       0.2517
     ],
-    "infer_ms": 0.0008
+    "infer_ms": 0.0014
   },
   "analytical": {
     "mae": 0.0042,
@@ -948,7 +985,7 @@
       0.0032,
       0.0052
     ],
-    "infer_ms": 0.0127
+    "infer_ms": 0.0147
   },
   "linear": {
     "mae": 0.0034,
@@ -961,7 +998,7 @@
       0.0026,
       0.0043
     ],
-    "infer_ms": 0.0111
+    "infer_ms": 0.0095
   },
   "dt": {
     "mae": 0.0111,
@@ -974,7 +1011,7 @@
       0.0087,
       0.0137
     ],
-    "infer_ms": 0.0086
+    "infer_ms": 0.007
   },
   "rf": {
     "mae": 0.009,
@@ -987,7 +1024,7 @@
       0.0064,
       0.0122
     ],
-    "infer_ms": 0.2905
+    "infer_ms": 0.3178
   },
   "gbdt": {
     "mae": 0.0077,
@@ -1000,7 +1037,7 @@
       0.0058,
       0.0101
     ],
-    "infer_ms": 0.0182
+    "infer_ms": 0.0184
   },
   "lgbm": {
     "mae": 0.0086,
@@ -1013,7 +1050,7 @@
       0.0067,
       0.0107
     ],
-    "infer_ms": 0.0423
+    "infer_ms": 0.0445
   },
   "logistic_clf": {
     "Model": "Logistic Regression",

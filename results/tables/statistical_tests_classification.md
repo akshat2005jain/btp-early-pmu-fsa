@@ -1,9 +1,9 @@
-| reference_model | baseline_model | metric | reference_score | baseline_score | delta_ref_minus_base | ci95_low | ci95_high | p_value_wilcoxon | p_value_bootstrap | significant_p005 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| calibrated_gb_platt | logistic_clf | brier_score | 0.0141 | 0.0132 | 0.0009 | -0.0131 | 0.0206 | 0.0000 | 0.9640 | True |
-| calibrated_gb_platt | dt_clf | brier_score | 0.0141 | 0.0192 | -0.0051 | -0.0298 | 0.0100 | 0.0000 | 0.7440 | True |
-| calibrated_gb_platt | rf_clf | brier_score | 0.0141 | 0.0093 | 0.0048 | 0.0007 | 0.0094 | 0.0000 | 0.0200 | True |
-| calibrated_gb_platt | gbdt_clf | brier_score | 0.0141 | 0.0192 | -0.0051 | -0.0305 | 0.0095 | 0.7916 | 0.7420 | False |
-| calibrated_gb_platt | lgbm_clf | brier_score | 0.0141 | 0.0181 | -0.0040 | -0.0253 | 0.0102 | 0.5178 | 0.8380 | False |
-| calibrated_gb_platt | calibrated_gb_platt | brier_score | 0.0141 | 0.0141 | 0.0000 | 0.0000 | 0.0000 | 1.0000 | 1.0000 | False |
-| calibrated_gb_platt | calibrated_gb_iso | brier_score | 0.0141 | 0.0080 | 0.0061 | 0.0020 | 0.0125 | 0.0000 | 0.0000 | True |
+| reference_model | baseline_model | n_paired | metric | direction | reference_score | baseline_score | delta_ref_minus_base | ci95_low | ci95_high | test_statistic | p_value_permutation | p_holm_adjusted | p_value_bootstrap | p_value_wilcoxon | significant_unadjusted_005 | significant_holm_005 | significant_p005 | practical_significance | test_disagreement_note |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| calibrated_gb_platt | logistic_clf | 52 | brier_score | lower_is_better | 0.0141 | 0.0132 | 0.0009 | -0.0127 | 0.0203 | 0.0009 | 1.0000 | 1.0000 | 0.9220 | 0.0000 | False | False | False | negligible (<0.002 Brier difference) | Wilcoxon tests rank symmetry of non-zero differences (sensitive to many tiny probability/residual offsets vs rare large errors), whereas primary sign-flip permutation tests mean loss difference E[d_i]=0. |
+| calibrated_gb_platt | dt_clf | 52 | brier_score | lower_is_better | 0.0141 | 0.0192 | -0.0051 | -0.0292 | 0.0102 | -0.0051 | 1.0000 | 1.0000 | 0.6357 | 0.0000 | False | False | False | small (0.002-0.010 Brier difference) | Wilcoxon tests rank symmetry of non-zero differences (sensitive to many tiny probability/residual offsets vs rare large errors), whereas primary sign-flip permutation tests mean loss difference E[d_i]=0. |
+| calibrated_gb_platt | rf_clf | 52 | brier_score | lower_is_better | 0.0141 | 0.0093 | 0.0048 | 0.0008 | 0.0097 | 0.0048 | 0.0410 | 0.2050 | 0.0365 | 0.0000 | True | False | False | small (0.002-0.010 Brier difference) | consistent |
+| calibrated_gb_platt | gbdt_clf | 52 | brier_score | lower_is_better | 0.0141 | 0.0192 | -0.0051 | -0.0305 | 0.0097 | -0.0051 | 0.9998 | 1.0000 | 0.6462 | 0.7916 | False | False | False | small (0.002-0.010 Brier difference) | consistent |
+| calibrated_gb_platt | lgbm_clf | 52 | brier_score | lower_is_better | 0.0141 | 0.0181 | -0.0040 | -0.0260 | 0.0101 | -0.0040 | 0.9992 | 1.0000 | 0.6642 | 0.5178 | False | False | False | small (0.002-0.010 Brier difference) | consistent |
+| calibrated_gb_platt | calibrated_gb_platt | 52 | brier_score | lower_is_better | 0.0141 | 0.0141 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | False | False | False | self_reference | self_reference |
+| calibrated_gb_platt | calibrated_gb_iso | 52 | brier_score | lower_is_better | 0.0141 | 0.0080 | 0.0061 | 0.0018 | 0.0124 | 0.0061 | 0.0002 | 0.0012 | 0.0295 | 0.0000 | True | True | True | small (0.002-0.010 Brier difference) | consistent |

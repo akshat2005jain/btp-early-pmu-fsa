@@ -455,11 +455,23 @@ class LatencyBenchmark:
             "n_reps": eff_reps,
             "warmup_reps": eff_warmup,
             "n_features": n_feat,
+            "nominal_pmu_frame_interval_ms": 20.0,
+            "observation_window_ms": round(float(t_obs) * 1000.0, 1),
+            "benchmark_environment_disclaimer": (
+                "User-space desktop Python benchmark (time.perf_counter_ns); measures algorithmic "
+                "compute latency relative to the 20 ms 50-fps PMU frame interval, not deterministic "
+                "RTOS or hardware-in-the-loop (HIL) hard real-time relay execution."
+            ),
             "environment": env_info,
             "stages": stages,
             "trials": {
-                "feat_times_ms": [round(t, 4) for t in s2_times[:25]],
-                "infer_times_ms": [round(a + b + c, 4) for a, b, c in list(zip(s3_times, s4_times, s5_times))[:25]],
+                "slice_times_ms": [round(t, 5) for t in s1_times],
+                "feat_times_ms": [round(t, 5) for t in s2_times],
+                "reg_times_ms": [round(t, 5) for t in s3_times],
+                "clf_times_ms": [round(t, 5) for t in s4_times],
+                "cal_times_ms": [round(t, 5) for t in s5_times],
+                "infer_times_ms": [round(a + b + c, 5) for a, b, c in zip(s3_times, s4_times, s5_times)],
+                "e2e_times_ms": [round(t, 5) for t in s6_times],
             },
         }
 
@@ -553,7 +565,7 @@ class LatencyBenchmark:
             {"Metric": "End-to-End Median Online Latency", "Value": f"{profile_result.get('t_total_ms', 0.0):.3f} ms", "Target": f"< {self.budget_total_ms:.1f} ms"},
             {"Metric": "End-to-End P95 / P99 Tail Latency", "Value": f"{profile_result.get('t_total_p95_ms', 0.0):.3f} / {profile_result.get('t_total_p99_ms', 0.0):.3f} ms", "Target": f"< {self.budget_total_ms:.1f} ms"},
             {"Metric": "Measured 10s Dynamic ODE Simulation (Median)", "Value": f"{profile_result.get('sim_time_ms', 0.0):.2f} ms (hardware_measured={profile_result.get('sim_measured_on_hardware', False)})", "Target": "Hardware Reference"},
-            {"Metric": "Computational Speedup Ratio (Median Sim / Median Online)", "Value": f"{profile_result.get('speedup_factor', 0.0):.1f}x", "Target": "Real-Time Screening"},
+            {"Metric": "Computational Speedup Ratio (Median Sim / Median Online)", "Value": f"{profile_result.get('speedup_factor', 0.0):.1f}x", "Target": "Sub-Frame Screening (20 ms 50-fps frame; desktop benchmark)"},
             {"Metric": "Repetitions / Warm-up Runs", "Value": f"{profile_result.get('n_reps', 100)} / {profile_result.get('warmup_reps', 10)}", "Target": ">= 100 / 10"},
             {"Metric": "Latency Compliant (< 10 ms)", "Value": str(profile_result.get("latency_compliant_under_10ms", True)), "Target": "PASS"},
         ]

@@ -356,16 +356,23 @@ def _resolve_f_sys_from_traj(
     bus_idx: Optional[int] = None,
     area_partition: Optional[Dict[int, List[int]]] = None,
 ) -> np.ndarray:
-    """Resolve PMU frequency series strictly from bus_frequencies unless missing."""
+    """Resolve PMU frequency series strictly from observable PMU channels."""
     if bus_idx is not None:
+        if "bus_frequencies" not in windowed_traj:
+            raise KeyError("Missing required PMU channel 'bus_frequencies'")
         return np.asarray(windowed_traj["bus_frequencies"][:, bus_idx], dtype=float)
     if "bus_frequencies" in windowed_traj:
         bf = np.asarray(windowed_traj["bus_frequencies"], dtype=float)
         if bf.size > 0:
             return estimate_pmu_system_frequency(bf, area_partition=area_partition)
     if "pmu_sys_frequency" in windowed_traj:
-        return np.asarray(windowed_traj["pmu_sys_frequency"], dtype=float)
-    return np.asarray(windowed_traj["coi_frequency"], dtype=float)
+        psys = np.asarray(windowed_traj["pmu_sys_frequency"], dtype=float)
+        if psys.size > 0:
+            return psys
+    raise KeyError(
+        "Missing required PMU frequency channel ('bus_frequencies' or 'pmu_sys_frequency'); "
+        "falling back to internal 'coi_frequency' is forbidden."
+    )
 
 
 def _infer_fps(ts: np.ndarray, meta: Dict[str, Any]) -> float:
@@ -712,42 +719,37 @@ def extract_features(
 
     eff_fps = _infer_fps(ts, w_meta)
 
-    has_bf = ("bus_frequencies" in w) and (np.asarray(w["bus_frequencies"]).size > 0)
-    if has_bf:
-        bf_clean, obs_bf_mask = _prepare_pmu_bus_channel(
-            np.asarray(w["bus_frequencies"], dtype=float),
-            "bus_frequencies",
-            policy=nan_policy,
-            f_nominal=eff_f_nominal,
-            observed_buses=observed_buses,
-        )
-        obs_indices = np.flatnonzero(obs_bf_mask)
-        f_sys_pmu = estimate_pmu_system_frequency(
-            bf_clean,
-            observed_bus_indices=obs_indices,
-            area_partition=area_partition,
-        )
-    else:
-        bf_clean = np.empty((n, 0), dtype=float)
-        obs_bf_mask = np.zeros(0, dtype=bool)
-        fallback_key = "pmu_sys_frequency" if "pmu_sys_frequency" in w else "coi_frequency"
-        f_sys_raw = np.asarray(w[fallback_key], dtype=float)
-        clean_policy = "ffill" if nan_policy in ("ffill", "locf", "impute") else "raise"
-        f_sys_pmu = _validate_and_clean_nans(
-            f_sys_raw, fallback_key, policy=clean_policy, f_nominal=eff_f_nominal
-        )
+    if "bus_frequencies" not in w:
+        raise KeyError("Missing required PMU channel 'bus_frequencies'")
+    bf_raw = np.asarray(w["bus_frequencies"], dtype=float)
+    if bf_raw.size == 0:
+        raise ValueError("Required PMU channel 'bus_frequencies' is empty")
+    bf_clean, obs_bf_mask = _prepare_pmu_bus_channel(
+        bf_raw,
+        "bus_frequencies",
+        policy=nan_policy,
+        f_nominal=eff_f_nominal,
+        observed_buses=observed_buses,
+    )
+    obs_indices = np.flatnonzero(obs_bf_mask)
+    f_sys_pmu = estimate_pmu_system_frequency(
+        bf_clean,
+        observed_bus_indices=obs_indices,
+        area_partition=area_partition,
+    )
 
-    has_va = ("voltage_angles" in w) and (np.asarray(w["voltage_angles"]).size > 0)
-    if has_va:
-        va_clean, _ = _prepare_pmu_bus_channel(
-            np.asarray(w["voltage_angles"], dtype=float),
-            "voltage_angles",
-            policy=nan_policy,
-            f_nominal=eff_f_nominal,
-            observed_buses=observed_buses,
-        )
-    else:
-        va_clean = np.empty((n, 0), dtype=float)
+    if "voltage_angles" not in w:
+        raise KeyError("Missing required PMU channel 'voltage_angles'")
+    va_raw = np.asarray(w["voltage_angles"], dtype=float)
+    if va_raw.size == 0:
+        raise ValueError("Required PMU channel 'voltage_angles' is empty")
+    va_clean, _ = _prepare_pmu_bus_channel(
+        va_raw,
+        "voltage_angles",
+        policy=nan_policy,
+        f_nominal=eff_f_nominal,
+        observed_buses=observed_buses,
+    )
 
     delta_t_init = float(kwargs.get("delta_t_init", 0.10))
     delta_t_curv = float(kwargs.get("delta_t_curv", 0.20))

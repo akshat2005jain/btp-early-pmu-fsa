@@ -2,6 +2,14 @@
 
 An end-to-end simulation, synchrophasor emulation, strictly causal feature engineering, probability-calibrated machine learning, and statistical benchmarking framework (`pmu_fsa`) for early post-disturbance frequency-security assessment on the **IEEE 39-bus, 10-machine** multi-area power system standardized at **50.0 Hz** (`f_secure = 49.50 Hz`).
 
+### Project Team & Supervision
+- **Team Members**:
+  - **Aditya Jha** (Member 1)
+  - **Akshat Jain** (Member 2)
+  - **Arshdeep Singh** (Member 3)
+  - **Raj Bathla** (Member 4)
+- **Faculty Mentor**: **Dr. Deepak Kumar Gupta**
+
 ---
 
 ## 1. Research Objective
@@ -59,12 +67,13 @@ Ground-truth target `ground_truth_nadir` (`f_nadir`) and `ground_truth_t_nadir` 
 
 ---
 
-## 5. Renewable Integration Model
+## 5. Renewable Integration Approximation (Approach B: Co-Located Effective-Response Derating)
 
-Converter-interfaced solar/wind generation (`src/pmu_fsa/simulation/renewables.py`) displaces synchronous capacity across all 9 non-slack generator buses (`DEFAULT_DISPLACED_BUSES = [30, 32, 33, 34, 35, 36, 37, 38, 39]`, totaling `5,620.0 MW` nominal dispatch; Slack Bus 31 excluded):
+Converter-interfaced renewable penetration (`src/pmu_fsa/simulation/renewables.py`) is represented via **Approach B (co-located constant-power grid-following effective-response derating)** across the 9 non-slack generator buses (`DEFAULT_DISPLACED_BUSES = [30, 32, 33, 34, 35, 36, 37, 38, 39]`, totaling `5,620.0 MW` nominal dispatch; Slack Bus 31 excluded):
 
-- **Requested vs. Realized Penetration**: For requested load-referenced penetration `p_ren_requested in {0.10, 0.20, 0.30, 0.40, 0.50}`, required converter dispatch is `P_ren = p_ren_requested * load_scale * P_load,base`, yielding uniform synchronous displacement factor `alpha = P_ren / P_target,scaled`. Because total generation (`6,192.8 MW` nominal, including transmission losses) slightly exceeds PQ load (`6,150.1 MW`), generation-referenced `p_ren_realized = [0.09931, 0.19862, 0.29793, 0.39724, 0.49655]` (`9.93%–49.66%`), scaling strictly linearly with zero saturation plateau.
-- **Constant-PQ Grid-Following (GFL) Inertia Derating**: Under the default GFL converter assumption (`h_vir = 0.0 s`, `enable_droop = False`), displaced synchronous capacity contributes zero rotational inertia and zero primary droop, reducing effective synchronous inertia per displaced bus to `H_eff,i = (1 - alpha) * H_orig,i` (from `H_tot = 294.7 s` at `10%` RES down to `174.6 s` at `50%` RES before outage). Optional synthetic fast converter droop (`enable_droop = True`, `r_ren`, `t_inv`) is supported for grid-forming sensitivity studies.
+- **Bounded Physical Representation**: Pre-disturbance terminal bus active-power setpoints in the AC power flow remain unchanged while rotational inertia, mechanical damping, and synchronous governor participation are derated homogeneously by `1 - alpha`. Explicit solar/wind park placement at separate load buses, pre-contingency line-flow redistribution, converter PLL dynamics, and current saturation are outside this model's scope.
+- **Requested vs. Realized Penetration**: For requested load-referenced penetration `p_ren_requested in {0.10, 0.20, 0.30, 0.40, 0.50}`, required converter share is `P_ren = p_ren_requested * load_scale * P_load,base`, yielding uniform derating factor `alpha = P_ren / P_target,scaled`. Because total generation (`6,192.8 MW` nominal, including transmission losses) slightly exceeds PQ load (`6,150.1 MW`), generation-referenced `p_ren_realized = [0.09931, 0.19862, 0.29793, 0.39724, 0.49655]` (`9.93%–49.66%`), scaling strictly linearly with zero clipping.
+- **Constant-PQ Grid-Following (GFL) Inertia/Damping/Droop Derating**: Under the default GFL converter assumption (`h_vir = 0.0 s`, `enable_droop = False`), displaced synchronous share contributes zero rotational inertia and zero primary converter droop, reducing effective synchronous inertia per displaced bus to `H_eff,i = (1 - alpha) * H_orig,i` (from `H_tot = 294.7 s` at `10%` RES down to `174.6 s` at `50%` RES before outage). Optional synthetic fast converter droop (`enable_droop = True`, `r_ren`, `t_inv`) is supported for grid-forming sensitivity studies.
 
 ---
 
@@ -169,10 +178,11 @@ Because misclassifying an actual under-frequency emergency (`f_nadir < 49.50 Hz`
 
 ## 13. Evaluation & Statistical Methodology
 
-All evaluation modules (`src/pmu_fsa/evaluation/`) report **raw, unsmoothed, unclamped** empirical metrics strictly on held-out partitions:
-- **Paired Non-Parametric Statistical Testing (`statistical_tests.py`)**: Computes `1,000`-resample scenario-paired bootstrap 95% confidence intervals and two-sided Wilcoxon signed-rank + paired bootstrap `p`-values comparing GBDT / Calibrated GBDT against all baselines.
+All evaluation modules (`src/pmu_fsa/evaluation/`) report **raw, unsmoothed, unclamped** empirical metrics strictly on causally eligible (`t_0 + T_obs < t_nadir`) held-out partitions, evaluating **both** the validation-selected best regressor (`linear` Ridge, Val MAE `3.4 mHz`) and the proposed nonlinear regressor (`gbdt`, Val MAE `10.6 mHz`) side by side:
+- **Paired Sign-Flip Permutation & Holm-Adjusted Statistical Testing (`statistical_tests.py`)**: Uses a two-sided null-centered paired sign-flip permutation test on scenario-wise loss differences (`|y - y_hat|` for MAE; `(p - y)^2` for Brier) as the primary `p`-value, applies **Holm (1979) step-down FWER adjustment** across multiple model comparisons, reports `2,000`-resample paired bootstrap 95% confidence intervals, and reports Wilcoxon signed-rank separately as a rank-symmetry diagnostic (without combining tests via an unadjusted `OR` rule).
+- **Physical Threshold & Probability Cutoff Sweeps**: Sweeps both physical grid-code nadir thresholds (`f_thresh in {49.20, 49.40, 49.50, 49.60, 49.70, 49.80} Hz`) and probability cutoffs (`tau in {0.30..0.90}`).
 - **Multi-Seed & Sample-Complexity Audits**: Evaluates variance across 5 random seeds (`42–46`) and training-set fractions `[20%, 40%, 60%, 80%, 100%]` (`N = 30..148`).
-- **6-Stage Hardware Latency Profiling (`latency.py`)**: Uses `time.perf_counter_ns()` (`10` warmup + `100` timed repetitions) across all 5 online stages + total end-to-end execution, benchmarked directly against hardware-measured `10 s` `DynamicSimulator` runs on the same CPU.
+- **6-Stage Desktop Latency Profiling (`latency.py`)**: Uses `time.perf_counter_ns()` (`10` warmup + `100` timed repetitions, retaining all per-repetition timings in `latency_trials.csv`) benchmarked relative to the `20.0 ms` 50-fps PMU frame interval and measured `10 s` `DynamicSimulator` runs on the same CPU (reported strictly as desktop algorithmic compute latency, not hard real-time RTOS/HIL certification).
 
 ---
 
@@ -209,18 +219,22 @@ All numbers below match `results/tables/*.md`, `results/evaluation_report.md`, a
 - **Safety Threshold Sweep**: Raising the decision threshold from `tau = 0.50` to conservative **`tau = 0.70`** eliminates all missed insecure emergencies (`FNR_insecure = 0.0000`, `0/31` missed, `TN=31, TP=20, FP=0, FN=1`) with `FPR_secure = 0.0476` and `F1 = 0.9756`.
 
 ### 14.3 Observation Window Sensitivity, OOD Generalization, Noise, Observability & Latency
-- **Window Trade-off (`T_obs in {0.5, 1.0, 1.5, 2.0} s`)**:
-  - Held-Out ID `test` (`N=52`): MAE improves from `0.0124 Hz` (`0.5 s`, mean `t_lead = 1.7942 s`) -> **`0.0077 Hz`** (`1.0 s`, `t_lead = 1.2942 s`) -> **`0.0069 Hz`** (`1.5 s`, `t_lead = 0.7942 s`, `F1 = 1.0000`) -> `0.0074 Hz` (`2.0 s`, `t_lead = 0.2942 s`).
-  - Held-Out `ood_test` (`N=480`): MAE improves from `0.0279 Hz` (`0.5 s`) -> **`0.0184 Hz`** (`1.0 s`, `F1 = 0.9860`, `ECE = 0.0224`) -> `0.0218 Hz` (`1.5 s`, `F1 = 0.9943`, `FNR_insecure = 0.0000`).
-- **OOD Domain Shift (`T_obs = 1.0 s`)**:
-  - `OOD-Load` (`0.80x, 1.20x`, `N=180`): `MAE = 0.0078 Hz`, `F1 = 0.9792`, `ECE = 0.0263`.
-  - `OOD-RES` (`40–50%` RES, `N=180`): `MAE = 0.0267 Hz`, `F1 = 1.0000`, `FNR_insecure = 0.0000`, `ECE = 0.0216`; 95% prediction interval widens from `0.6616 Hz` (ID) to **`0.7428 Hz`** (`+12.3%`) due to unseen low-inertia nadir tail extrapolation (`48.26 Hz` vs. `48.72 Hz` training floor).
-  - `OOD-Combined` (`N=120`): `MAE = 0.0217 Hz`, `F1 = 0.9851`, `ECE = 0.0250`. Pooled `OOD-All` (`N=480`): `MAE = 0.0184 Hz` (`+0.0107 Hz` shift gap), `F1 = 0.9860`, `Brier = 0.0086`, `ECE = 0.0224`.
-- **PMU Gaussian Noise (`sigma_f in {0, 5, 10, 20, 50} mHz`)**: Held-out ID `MAE` rises gradually `0.0077 -> 0.0082 -> 0.0085 -> 0.0101 -> 0.0114 Hz` while `F1 = 0.9767` remains invariant across all noise levels (`prob_stability_mad <= 0.0131`).
-- **Partial PMU & 25-fps Ablations (`train`-only `N=148` baseline `ID MAE = 0.0093 Hz`)**:
+- **Window Trade-off (`T_obs in {0.5, 1.0, 1.5, 2.0} s`, strictly pre-nadir `t_0 + T_obs < t_nadir`)**:
+  - Held-Out ID `test` (`N=52`, 100% causal across all 4 windows): Proposed `GBDT` MAE is `0.0124 Hz` (`0.5 s`, mean `t_lead = 1.7942 s`) -> **`0.0077 Hz`** (`1.0 s`, `t_lead = 1.2942 s`) -> **`0.0069 Hz`** (`1.5 s`, `t_lead = 0.7942 s`, `F1 = 1.0000`) -> `0.0074 Hz` (`2.0 s`, `t_lead = 0.2942 s`); Validation-Selected `Ridge` MAE improves monotonically `0.0063 -> 0.0034 -> 0.0030 -> 0.0026 Hz`.
+  - Held-Out `ood_test` (`N=480` at `0.5–1.5 s`; **`N=472` at `2.0 s` after excluding `8` non-causal heavy-load cases with `t_nadir <= 3.00 s`**, `t_lead_min = +0.0200 s`): `GBDT` MAE is `0.0279 Hz` (`0.5 s`) -> **`0.0184 Hz`** (`1.0 s`, `F1 = 0.9860`, `ECE = 0.0224`) -> `0.0218 Hz` (`1.5 s`, `F1 = 0.9943`, `FNR_insecure = 0.0000`) -> `0.0229 Hz` (`2.0 s`, `N=472`, `F1 = 0.9861`). On the `472`-scenario common causal intersection across all 4 windows (`window_sensitivity_ood_common.csv`), MAE is `0.0272 -> 0.0184 -> 0.0218 -> 0.0229 Hz`.
+- **OOD Domain Shift (`T_obs = 1.0 s`, Validation-Selected `Ridge` vs. Proposed `GBDT`)**:
+  - `OOD-Load` (`0.80x, 1.20x`, `N=180`): `Ridge MAE = 0.0046 Hz`, `GBDT MAE = 0.0078 Hz`, `Calibrated GBDT F1 = 0.9792`, `ECE = 0.0263`.
+  - `OOD-RES` (`40–50%` RES, `N=180`): `Ridge MAE = 0.0054 Hz` vs. `GBDT MAE = 0.0267 Hz` (tree leaf support bounded at `48.72 Hz`), while `Calibrated GBDT F1 = 1.0000`, `FNR_insecure = 0.0000`, `ECE = 0.0216`, and 95% prediction interval widens from `0.6616 Hz` (ID) to **`0.7428 Hz`** (`+12.3%`).
+  - `OOD-Combined` (`N=120`): `Ridge MAE = 0.0069 Hz`, `GBDT MAE = 0.0217 Hz`, `F1 = 0.9851`. Pooled `OOD-All` (`N=480`): `Ridge MAE = 0.0054 Hz`, `GBDT MAE = 0.0184 Hz`, `F1 = 0.9860`, `Brier = 0.0086`, `ECE = 0.0224`.
+- **PMU Gaussian Noise (`sigma_f in {0, 5, 10, 20, 50} mHz` — Clean vs. Noisy Trade-off)**:
+  - **Proposed `GBDT`**: Held-out ID `MAE` rises gently `0.0077 -> 0.0082 -> 0.0085 -> 0.0101 -> 0.0114 Hz` while `F1 = 0.9767` remains invariant across all noise levels (`prob_stability_mad <= 0.0131`).
+  - **Validation-Selected `Ridge`**: Excels at `0–5 mHz` (`0.0034 -> 0.0050 Hz`), matches GBDT at `10 mHz` (`0.0087 Hz`), and degrades to `0.0183 Hz` (`20 mHz`) and `0.0571 Hz` (`50 mHz`) due to linear coefficient amplification of derivative noise—demonstrating why tree ensembles provide `5x` stronger high-noise resilience alongside calibrated intervals.
+- **Physical Security-Threshold Sensitivity (`f_thresh in {49.20, 49.40, 49.50, 49.60, 49.70, 49.80} Hz`)**: Across `49.20–49.70 Hz`, held-out ID `F1` remains in `[0.9286, 1.0000]` and OOD `F1` remains in `[0.9860, 1.0000]` (`F1 = 1.0000` at the `49.40 Hz` UFLS Stage-1 threshold); only at `49.80 Hz` (`5.8%` secure minority) does `F1` drop due to extreme positive-class scarcity (`frequency_threshold_sensitivity.csv`).
+- **Partial PMU, Single-Family Drops & 25-fps Ablations (`train`-only `N=148` baseline `ID MAE = 0.0093 Hz`)**:
+  - **Single-Family Drops**: Dropping aggregate frequency level/integral (`no_freq_level`) increases `ID MAE` to `0.0144 Hz` (`OOD MAE = 0.0304 Hz`), confirming `freq_dev_integral` as the primary predictor; `no_curvature` gives `0.0100 Hz` and `no_rocof` gives `0.0084 Hz`.
   - **13/39 Sparse PMU (`33.3%` bus coverage)**: `ID MAE = 0.0108 Hz`, `ID F1 = 1.0000` (`FNR_insecure = 0.0000`), `OOD MAE = 0.0238 Hz`, `OOD F1 = 0.9858`.
   - **25 fps Reporting Rate**: `ID MAE = 0.0094 Hz` (`+0.0001 Hz` vs. `50 fps`), `ID F1 = 0.9767`, `OOD MAE = 0.0239 Hz`.
-- **6-Stage Real Hardware Latency (`Intel Core i7-9750H`, 100 reps)**: `0.1420 ms` slicing + `0.8208 ms` 14-feature extraction + `0.7493 ms` regression + `0.6353 ms` classification + `0.0293 ms` calibration = **`2.3805 ms` median total** (`2.9045 ms` P95, `3.3641 ms` P99) vs. **`125.3759 ms`** hardware-measured `10 s` ODE simulation (**`52.7x` speedup**).
+- **6-Stage Desktop Compute Latency (`Intel Core i7-9750H`, 100 reps, user-space Python)**: **`2.5306 ms` median total** (`3.2345 ms` P95, `3.9396 ms` P99; `2.2810 ms` median for `Ridge` + `Calibrated GBDT`) vs. `20.0 ms` 50-fps PMU frame interval and **`161.17 ms`** measured `10 s` ODE simulation (**`63.7x` desktop speedup**; desktop benchmark, not hard real-time RTOS/HIL certification).
 
 ---
 
@@ -245,15 +259,16 @@ All numbers below match `results/tables/*.md`, `results/evaluation_report.md`, a
 
 ### Environment Setup (Python 3.9+)
 ```bash
-cd /Users/akshat/Desktop/btp-early-pmu-fsa
+cd btp-early-pmu-fsa
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -r requirements.txt
+pip install -e . --no-build-isolation --no-deps
 ```
 
 ### Option A: Single Master Reproducible Command (`scripts/run_all.py`)
 ```bash
-# Full 750-scenario simulation, feature extraction, validation, training, benchmarks & 13 figures:
+# Full 750-scenario simulation, feature extraction, validation, training, benchmarks & 14 figures:
 .venv/bin/python3 scripts/run_all.py --config configs/default_50hz.yaml --with-figures
 
 # Fast reproduction reusing existing raw .npz archives in data/raw/:
@@ -289,12 +304,12 @@ pip install -e ".[dev]"
   --features data/processed/features.npz \
   --tables-dir results/tables/ --report-file results/evaluation_report.md
 
-# Stage 5: Render all 13 publication figures (PNG @ 240 DPI + vector PDF)
+# Stage 5: Render all 14 publication figures (PNG @ 240 DPI + vector PDF)
 .venv/bin/python3 scripts/generate_figures.py
 
-# Stage 6: Run complete 232-test isolated production suite (83 unit/integration + 149 E2E)
+# Stage 6: Run complete isolated production test suite (pytest + 5-tier E2E)
 .venv/bin/pytest tests/ -q
-.venv/bin/python3 tests/e2e/run_e2e.py --tier all --report-path /tmp/e2e_report.md
+.venv/bin/python3 tests/e2e/run_e2e.py --tier all --report-path reports/final_audit/reproduction_e2e_report.md
 ```
 
 ### Data Manifest & Git Tracking Policy

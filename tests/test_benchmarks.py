@@ -25,6 +25,7 @@ from pmu_fsa.evaluation.statistical_tests import (
     LearningCurveEvaluator,
     MultiSeedStabilityEvaluator,
     compare_all_models_statistical,
+    holm_adjust_pvalues,
     paired_bootstrap_ci,
     paired_model_comparison_test,
 )
@@ -646,3 +647,90 @@ class TestIsolatedPipelineAndCLIEntrypoints:
         assert res_evl.returncode == 0, res_evl.stderr
         assert eval_report.exists()
         assert (eval_tables / "window_sensitivity.csv").exists()
+        assert (eval_tables / "ood_model_comparison.csv").exists()
+        assert not (models_dir / "calibrated_gb_isotonic.joblib").exists()
+
+        import joblib
+        gbdt_loaded = joblib.load(models_dir / "gbdt.joblib")
+        assert hasattr(gbdt_loaded, "artifact_metadata_")
+        assert gbdt_loaded.artifact_metadata_["feature_names"] == list(CANONICAL_FEATURE_NAMES)
+
+
+class TestAuditRegressionGuardrails:
+
+    def test_strict_pre_nadir_exclusion_and_common_intersection_in_sensitivity(
+        self,
+        partitioned_50hz_scenario_batch: List[Dict[str, Any]],
+    ) -> None:
+        import copy
+
+        batch = copy.deepcopy(partitioned_50hz_scenario_batch)
+        ood_indices = [i for i, s in enumerate(batch) if s["metadata"]["partition"] == "ood_test"]
+        assert len(ood_indices) >= 3
+        # Make 2 OOD scenarios reach nadir at t=2.85s (causal for 0.5-1.5s, non-causal for t0+2.0s=3.0s)
+        for idx in ood_indices[:2]:
+            batch[idx]["metadata"]["ground_truth_t_nadir"] = 2.85
+
+        bench = WindowSensitivityBenchmark(window_lengths=[0.5, 1.0, 1.5, 2.0], strict_nadir=True)
+        res = bench.run(batch)
+
+        df_ood = bench.to_dataframe(res, split="ood_test")
+        row_10 = df_ood[df_ood["window_obs"] == 1.0].iloc[0]
+        row_20 = df_ood[df_ood["window_obs"] == 2.0].iloc[0]
+
+        assert int(row_10["n_excluded"]) == 0
+        assert int(row_20["n_excluded"]) == 2
+        assert int(row_20["n_eligible"]) == len(ood_indices) - 2
+        assert float(row_20["t_lead_min"]) > 0.0
+
+        df_common = bench.to_dataframe(res, split="ood_common")
+        assert list(df_common["n_eligible"].astype(int)) == [len(ood_indices) - 2] * 4
+
+    def test_sign_flip_permutation_holm_and_wilcoxon_disagreement_handling(self) -> None:
+        # 51 tiny positive loss differences (+1e-5) balanced by 1 negative difference (-5.1e-4):
+        # exact mean loss difference is 0.0, yet Wilcoxon ranks 51 vs 1 and yields p < 0.001!
+        n = 52
+        y_true = np.zeros(n, dtype=float)
+        loss_b = np.full(n, 0.02, dtype=float)
+        loss_a = loss_b + 1e-5
+        loss_a[0] = max(0.0, loss_b[0] - 51 * 1e-5)
+
+        comp = paired_model_comparison_test(y_true, loss_a, loss_b, task="regression", n_boot=1000, seed=42)
+        assert abs(comp["delta_a_minus_b"]) < 1e-12
+        assert comp["p_value_wilcoxon"] < 0.01
+        assert comp["p_value_permutation"] > 0.50
+        assert comp["significant_at_005"] is False
+        assert "Wilcoxon tests rank symmetry" in comp["test_disagreement_note"]
+
+        # Verify Holm step-down adjustment monotonicity and FWER control
+        adj = holm_adjust_pvalues([0.04, 0.01, 0.20, 0.015])
+        # Sorted raw: [0.01*4=0.04, 0.015*3=0.045, 0.04*2=0.08, 0.20*1=0.20] -> mapped back: [0.08, 0.04, 0.20, 0.045]
+        np.testing.assert_allclose(adj, [0.08, 0.04, 0.20, 0.045], atol=1e-12)
+
+        df_stat = compare_all_models_statistical(
+            y_true,
+            {"ref": loss_a, "base_equal_mean": loss_b, "base_worse": loss_b + 0.05},
+            reference_model="ref",
+            task="regression",
+            n_boot=500,
+            seed=42,
+        )
+        row_eq = df_stat[df_stat["baseline_model"] == "base_equal_mean"].iloc[0]
+        row_worse = df_stat[df_stat["baseline_model"] == "base_worse"].iloc[0]
+        assert bool(row_eq["significant_holm_005"]) is False
+        assert bool(row_worse["significant_holm_005"]) is True
+
+    def test_single_family_drop_ablations_ten_rows(
+        self,
+        partitioned_50hz_scenario_batch: List[Dict[str, Any]],
+    ) -> None:
+        interp = InterpretabilityAnalyzer(t_obs=1.0, threshold=49.50, seed=42)
+        res_10 = interp.run_feature_group_ablations(
+            partitioned_50hz_scenario_batch,
+            include_single_family_drops=True,
+        )
+        names = [r["ablation"] for r in res_10["results"]]
+        assert len(names) == 10
+        for req in ("no_rocof", "no_freq_level", "no_curvature"):
+            assert req in names
+

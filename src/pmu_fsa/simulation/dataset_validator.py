@@ -6,10 +6,40 @@ import datetime as dt_mod
 import hashlib
 import json
 import math
+import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+DATASET_VERSION = "2.0.0"
+FEATURE_SCHEMA_VERSION = "2.0.0"
+
+
+def _to_portable_path(p: Optional[Union[str, Path]]) -> Optional[str]:
+    """Convert paths inside REPO_ROOT to portable POSIX repo-relative strings."""
+    if p is None:
+        return None
+    path_obj = Path(p)
+    try:
+        resolved = path_obj.resolve()
+        return resolved.relative_to(REPO_ROOT.resolve()).as_posix()
+    except Exception:
+        return path_obj.as_posix()
+
+
+def _get_git_commit() -> str:
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(REPO_ROOT),
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+        )
+        return out.decode("utf-8").strip()
+    except Exception:
+        return "unknown"
 
 from pmu_fsa.simulation.ieee39_data import (
     NOMINAL_FREQ,
@@ -132,6 +162,7 @@ def validate_dataset(
     raw_t_disturb_by_id: Dict[str, float] = {}
     raw_ren_req_by_id: Dict[str, float] = {}
     raw_ren_real_by_id: Dict[str, float] = {}
+    scenario_records_by_id: Dict[str, Dict[str, Any]] = {}
     raw_signatures: List[np.ndarray] = []
 
     id_set_seen: set[str] = set()
@@ -295,6 +326,26 @@ def validate_dataset(
                 partition_rule_errors.append(f"{scen_id}:id_in_ood_test")
             if rec_ood != expected_ood:
                 partition_rule_errors.append(f"{scen_id}:ood_type={rec_ood}!=expected={expected_ood}")
+
+            scenario_records_by_id[scen_id] = {
+                "scenario_id": scen_id,
+                "partition": part,
+                "ood_type": rec_ood,
+                "disturbed_gen": int(meta.get("disturbed_gen", 0)),
+                "loss_fraction": round(float(meta.get("loss_fraction", 0.0)), 4),
+                "active_loss_mw": round(float(meta.get("active_loss_mw", 0.0)), 3),
+                "p_ren_requested": round(p_req, 4),
+                "p_ren_realized": round(p_real, 4),
+                "load_scale": round(ld_scale, 4),
+                "t_disturb_s": round(t0, 4),
+                "ground_truth_nadir_hz": round(gt_nadir, 5) if math.isfinite(gt_nadir) else None,
+                "ground_truth_t_nadir_s": round(gt_t_nadir, 4) if math.isfinite(gt_t_nadir) else None,
+                "is_secure": int(meta.get("is_secure", -1)) if math.isfinite(gt_nadir) else None,
+                "causal_windows": {
+                    f"{w:.1f}s": bool(math.isfinite(gt_t_nadir) and (t0 + w < gt_t_nadir - 1e-6))
+                    for w in win_list
+                },
+            }
 
     for fp in sim_files:
         checksums["raw_sim"][fp.name] = compute_file_sha256(fp)
@@ -590,19 +641,54 @@ def validate_dataset(
         for fname in sorted(checksums[group_key].keys()):
             agg_hasher.update(f"{group_key}/{fname}:{checksums[group_key][fname]}\n".encode("utf-8"))
 
+    partition_hashes: Dict[str, Any] = {}
+    for p in VALID_PARTITIONS:
+        sorted_sids = sorted(part_sets[p])
+        partition_hashes[p] = {
+            "count": len(sorted_sids),
+            "scenario_ids_sha256": hashlib.sha256("\n".join(sorted_sids).encode("utf-8")).hexdigest(),
+        }
+    partition_hashes["zero_overlap_verified"] = bool(
+        checks["11_zero_partition_overlap_and_window_consistency"]["passed"]
+    )
+
     all_passed = all(bool(c["passed"]) for c in checks.values())
 
     report: Dict[str, Any] = {
+        "dataset_version": DATASET_VERSION,
+        "feature_schema_version": FEATURE_SCHEMA_VERSION,
+        "git_commit": _get_git_commit(),
+        "random_seed": 42,
         "generated_at_utc": dt_mod.datetime.now(dt_mod.timezone.utc).isoformat(),
-        "raw_pmu_dir": str(pmu_dir),
-        "raw_sim_dir": str(sim_dir) if sim_dir is not None else None,
-        "processed_dir": str(proc_dir) if proc_dir is not None else None,
+        "raw_pmu_dir": _to_portable_path(pmu_dir),
+        "raw_sim_dir": _to_portable_path(sim_dir) if sim_dir is not None else None,
+        "processed_dir": _to_portable_path(proc_dir) if proc_dir is not None else None,
         "f_nominal_hz": f_nom,
         "security_threshold_hz": f_thresh,
         "windows_s": win_list,
+        "simulation_config": {
+            "network": "IEEE 39-Bus, 10-Machine (New England)",
+            "base_mva": 100.0,
+            "f_nominal_hz": f_nom,
+            "security_threshold_hz": f_thresh,
+            "pmu_fps": 50,
+            "t_disturb_s": 1.0,
+            "t_sim_s": 10.0,
+            "macro_intertie": False,
+            "bus39_h_system_base_s": 42.0,
+            "synchronous_governor_droop_r_pu": 0.05,
+            "synchronous_governor_tg_s": 4.20,
+            "converter_fast_droop_enabled": False,
+            "renewable_representation": (
+                "Approach B: co-located constant-power GFL effective inertia, damping, "
+                "and droop participation derating at unchanged terminal bus active-power dispatch"
+            ),
+            "pmu_filter": "Causal 5-point backward OLS ROCOF and area-weighted observed bus frequency reconstruction",
+        },
         "total_scenarios": len(pmu_files),
         "all_passed": all_passed,
         "partition_counts": partition_counts,
+        "partition_scenario_hashes": partition_hashes,
         "ood_type_counts": ood_type_counts,
         "class_counts_overall": class_counts_overall,
         "class_counts_by_partition": class_counts_by_partition,
@@ -611,6 +697,7 @@ def validate_dataset(
         "processed_files": processed_summary,
         "checks": checks,
         "dataset_aggregate_sha256": agg_hasher.hexdigest(),
+        "scenario_records": [scenario_records_by_id[k] for k in sorted(scenario_records_by_id.keys())],
         "checksums_sha256": checksums,
         "software_versions": get_software_versions(),
     }
@@ -722,7 +809,7 @@ def write_dataset_quality_report(
         f"(Mean: `{nadir_dist.get('mean_hz')} Hz`, Median: `{nadir_dist.get('median_hz')} Hz`)",
         f"- **Time-to-Nadir Range (s)**: `[{nadir_dist.get('t_nadir_min_s')}, {nadir_dist.get('t_nadir_max_s')}]` "
         f"(Median: `{nadir_dist.get('t_nadir_median_s')} s`)",
-        f"- **Manifest File**: `{man_p}`",
+        f"- **Manifest File**: `{_to_portable_path(man_p)}`",
         "",
     ])
 
